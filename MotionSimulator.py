@@ -48,28 +48,43 @@ class AxisProfile:
     roll_scale: float
     pitch_accel_gain: float
     roll_accel_gain: float
-    max_angle: float
+    pitch_limit: float
+    roll_limit: float
+    pitch_type: str
+    roll_type: str
     smoothing: float
 
-    def to_dict(self) -> dict[str, float]:
+    def to_dict(self) -> dict[str, str | float]:
         return {
             "pitch_scale": self.pitch_scale,
             "roll_scale": self.roll_scale,
             "pitch_accel_gain": self.pitch_accel_gain,
             "roll_accel_gain": self.roll_accel_gain,
-            "max_angle": self.max_angle,
+            "pitch_limit": self.pitch_limit,
+            "roll_limit": self.roll_limit,
+            "pitch_type": self.pitch_type,
+            "roll_type": self.roll_type,
             "smoothing": self.smoothing,
         }
 
     @classmethod
-    def from_dict(cls, name: str, data: dict[str, float]) -> "AxisProfile":
+    def from_dict(cls, name: str, data: dict[str, str | float]) -> "AxisProfile":
+        pitch_limit = data.get("pitch_limit")
+        roll_limit = data.get("roll_limit")
+        if pitch_limit is None or roll_limit is None:
+            pitch_limit = float(data.get("max_angle", 15.0))
+            roll_limit = float(data.get("max_angle", 15.0))
+
         return cls(
             name=name,
             pitch_scale=float(data.get("pitch_scale", 1.0)),
             roll_scale=float(data.get("roll_scale", 1.0)),
             pitch_accel_gain=float(data.get("pitch_accel_gain", 4.0)),
             roll_accel_gain=float(data.get("roll_accel_gain", 4.0)),
-            max_angle=float(data.get("max_angle", 15.0)),
+            pitch_limit=float(pitch_limit),
+            roll_limit=float(roll_limit),
+            pitch_type=str(data.get("pitch_type", "rotational")),
+            roll_type=str(data.get("roll_type", "rotational")),
             smoothing=float(data.get("smoothing", 0.92)),
         )
 
@@ -115,9 +130,12 @@ class SerialActuatorOutput:
     def __init__(self, serial_controller: "SerialController") -> None:
         self.serial_controller = serial_controller
 
-    def send(self, command: PlatformCommand) -> None:
-        payload = f"P{command.pitch_deg:.2f},R{command.roll_deg:.2f}"
-        self.serial_controller.send(payload)
+    def send_raw(self, payload: str, terminator: str = "") -> None:
+        self.serial_controller.send(payload, terminator=terminator)
+
+    def send_positions(self, pitch_target: int, roll_target: int) -> None:
+        payload = f"[A{pitch_target}][B{roll_target}]"
+        self.serial_controller.send(payload, terminator="")
 
 
 class AccTelemetryReceiver(threading.Thread):
@@ -246,8 +264,8 @@ class TwoDoFMotionCue:
         self.last_roll = roll
 
         return PlatformCommand(
-            pitch_deg=self._clamp(pitch, -self.max_angle, self.max_angle),
-            roll_deg=self._clamp(roll, -self.max_angle, self.max_angle),
+            pitch_deg=pitch,
+            roll_deg=roll,
             timestamp=frame.timestamp,
         )
 
@@ -309,10 +327,10 @@ class SerialController(threading.Thread):
                     pass
             time.sleep(0.05)
 
-    def send(self, payload: str) -> None:
+    def send(self, payload: str, terminator: str = "\n") -> None:
         if self.serial_port is None or not self.connected.is_set():
             raise RuntimeError("Serial port is not connected")
-        message = payload.strip() + "\n"
+        message = payload.strip() + terminator
         self.serial_port.write(message.encode("utf-8"))
         logging.debug("Sent serial payload: %s", message)
 
@@ -380,7 +398,7 @@ class MotionSimulatorApp:
         ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=4, column=0, columnspan=2, sticky="ew", pady=12)
 
         ttk.Label(frame, text="Send custom command:").grid(row=5, column=0, sticky=tk.W, pady=6)
-        self.custom_command_var = tk.StringVar(value="P0.00,R0.00")
+        self.custom_command_var = tk.StringVar(value="[A512][B512]")
         ttk.Entry(frame, textvariable=self.custom_command_var, width=40).grid(row=5, column=1, sticky=tk.W, pady=6)
 
         self.send_button = ttk.Button(frame, text="Send", command=self._send_custom_serial)
@@ -448,22 +466,56 @@ class MotionSimulatorApp:
         self.roll_scale_var = tk.DoubleVar(value=self.cue.roll_scale)
         self.pitch_accel_gain_var = tk.DoubleVar(value=self.cue.pitch_accel_gain)
         self.roll_accel_gain_var = tk.DoubleVar(value=self.cue.roll_accel_gain)
-        self.max_angle_var = tk.DoubleVar(value=self.cue.max_angle)
+        self.pitch_limit_var = tk.DoubleVar(value=15.0)
+        self.roll_limit_var = tk.DoubleVar(value=15.0)
+        self.pitch_type_var = tk.StringVar(value="rotational")
+        self.roll_type_var = tk.StringVar(value="rotational")
         self.smoothing_var = tk.DoubleVar(value=self.cue.smoothing)
 
-        self._build_axis_control(frame, 5, "Pitch scale", self.pitch_scale_var, 0.1, 3.0)
-        self._build_axis_control(frame, 6, "Roll scale", self.roll_scale_var, 0.1, 3.0)
-        self._build_axis_control(frame, 7, "Pitch accel gain", self.pitch_accel_gain_var, 0.0, 10.0)
-        self._build_axis_control(frame, 8, "Roll accel gain", self.roll_accel_gain_var, 0.0, 10.0)
-        self._build_axis_control(frame, 9, "Max angle", self.max_angle_var, 1.0, 30.0)
-        self._build_axis_control(frame, 10, "Smoothing", self.smoothing_var, 0.80, 0.99, step=0.01)
+        ttk.Label(frame, text="Pitch axis type:").grid(row=5, column=0, sticky=tk.W, pady=6)
+        self.pitch_type_select = ttk.Combobox(
+            frame,
+            textvariable=self.pitch_type_var,
+            values=["rotational", "linear"],
+            state="readonly",
+            width=18,
+        )
+        self.pitch_type_select.grid(row=5, column=1, sticky=tk.W, pady=6)
+        self.pitch_type_var.trace_add("write", self._update_axis_limit_labels)
 
-        ttk.Button(frame, text="Apply settings", command=self._set_cue_from_vars).grid(row=11, column=0, sticky=tk.W, pady=14)
+        ttk.Label(frame, text="Roll axis type:").grid(row=6, column=0, sticky=tk.W, pady=6)
+        self.roll_type_select = ttk.Combobox(
+            frame,
+            textvariable=self.roll_type_var,
+            values=["rotational", "linear"],
+            state="readonly",
+            width=18,
+        )
+        self.roll_type_select.grid(row=6, column=1, sticky=tk.W, pady=6)
+        self.roll_type_var.trace_add("write", self._update_axis_limit_labels)
+
+        self.pitch_limit_label = ttk.Label(frame, text="Pitch limit (deg):")
+        self.pitch_limit_label.grid(row=7, column=0, sticky=tk.W, pady=6)
+        ttk.Entry(frame, textvariable=self.pitch_limit_var, width=12).grid(row=7, column=1, sticky=tk.W, pady=6)
+        ttk.Scale(frame, variable=self.pitch_limit_var, from_=0.0, to=100.0, orient=tk.HORIZONTAL, length=220).grid(row=7, column=2, sticky=tk.W, pady=6)
+
+        self.roll_limit_label = ttk.Label(frame, text="Roll limit (deg):")
+        self.roll_limit_label.grid(row=8, column=0, sticky=tk.W, pady=6)
+        ttk.Entry(frame, textvariable=self.roll_limit_var, width=12).grid(row=8, column=1, sticky=tk.W, pady=6)
+        ttk.Scale(frame, variable=self.roll_limit_var, from_=0.0, to=100.0, orient=tk.HORIZONTAL, length=220).grid(row=8, column=2, sticky=tk.W, pady=6)
+
+        self._build_axis_control(frame, 9, "Pitch scale", self.pitch_scale_var, 0.1, 3.0)
+        self._build_axis_control(frame, 10, "Roll scale", self.roll_scale_var, 0.1, 3.0)
+        self._build_axis_control(frame, 11, "Pitch accel gain", self.pitch_accel_gain_var, 0.0, 10.0)
+        self._build_axis_control(frame, 12, "Roll accel gain", self.roll_accel_gain_var, 0.0, 10.0)
+        self._build_axis_control(frame, 13, "Smoothing", self.smoothing_var, 0.80, 0.99, step=0.01)
+
+        ttk.Button(frame, text="Apply settings", command=self._set_cue_from_vars).grid(row=14, column=0, sticky=tk.W, pady=14)
         ttk.Label(
             frame,
             text="Saved axis profiles are stored in axis_profiles.json.",
             foreground="gray",
-        ).grid(row=12, column=0, columnspan=3, sticky=tk.W, pady=(8, 0))
+        ).grid(row=15, column=0, columnspan=3, sticky=tk.W, pady=(8, 0))
 
     def _build_axis_control(
         self,
@@ -478,6 +530,13 @@ class MotionSimulatorApp:
         ttk.Label(frame, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, pady=4)
         ttk.Entry(frame, textvariable=var, width=12).grid(row=row, column=1, sticky=tk.W, pady=4)
         ttk.Scale(frame, variable=var, from_=minimum, to=maximum, orient=tk.HORIZONTAL, length=220).grid(row=row, column=2, sticky=tk.W, pady=4)
+
+    def _update_axis_limit_labels(self, *args) -> None:
+        self.pitch_limit_label.config(text=f"Pitch limit ({self._unit_for_type(self.pitch_type_var.get())}):")
+        self.roll_limit_label.config(text=f"Roll limit ({self._unit_for_type(self.roll_type_var.get())}):")
+
+    def _unit_for_type(self, axis_type: str) -> str:
+        return "mm" if axis_type == "linear" else "deg"
 
     def _profile_names(self) -> list[str]:
         return self.profile_manager.profile_names()
@@ -494,9 +553,13 @@ class MotionSimulatorApp:
         self.roll_scale_var.set(profile.roll_scale)
         self.pitch_accel_gain_var.set(profile.pitch_accel_gain)
         self.roll_accel_gain_var.set(profile.roll_accel_gain)
-        self.max_angle_var.set(profile.max_angle)
+        self.pitch_limit_var.set(profile.pitch_limit)
+        self.roll_limit_var.set(profile.roll_limit)
+        self.pitch_type_var.set(profile.pitch_type)
+        self.roll_type_var.set(profile.roll_type)
         self.smoothing_var.set(profile.smoothing)
         self._set_cue_from_vars()
+        self._update_axis_limit_labels()
         self._append_serial_log(f"Loaded profile '{name}'")
 
     def _save_profile(self) -> None:
@@ -509,7 +572,10 @@ class MotionSimulatorApp:
             roll_scale=self.roll_scale_var.get(),
             pitch_accel_gain=self.pitch_accel_gain_var.get(),
             roll_accel_gain=self.roll_accel_gain_var.get(),
-            max_angle=self.max_angle_var.get(),
+            pitch_limit=self.pitch_limit_var.get(),
+            roll_limit=self.roll_limit_var.get(),
+            pitch_type=self.pitch_type_var.get(),
+            roll_type=self.roll_type_var.get(),
             smoothing=self.smoothing_var.get(),
         )
         self.profile_manager.save_profile(profile)
@@ -533,8 +599,24 @@ class MotionSimulatorApp:
         self.cue.roll_scale = self.roll_scale_var.get()
         self.cue.pitch_accel_gain = self.pitch_accel_gain_var.get()
         self.cue.roll_accel_gain = self.roll_accel_gain_var.get()
-        self.cue.max_angle = self.max_angle_var.get()
         self.cue.smoothing = self.smoothing_var.get()
+        self.cue.smoothing = self.smoothing_var.get()
+
+    def _clamp_axis_value(self, value: float, limit: float) -> float:
+        if limit <= 0:
+            return 0.0
+        return max(min(value, limit), -limit)
+
+    def _axis_position(self, value: float, limit: float, axis_type: str) -> int:
+        clamped_value = self._clamp_axis_value(value, limit)
+        if limit <= 0:
+            return 512
+
+        normalized = clamped_value / limit
+        if axis_type == "linear":
+            normalized = clamped_value / limit
+        target = round(512 + normalized * 512)
+        return max(0, min(1024, target))
 
     def _available_serial_ports(self) -> list[str]:
         ports = [port.device for port in serial.tools.list_ports.comports()]
@@ -596,9 +678,19 @@ class MotionSimulatorApp:
             self._update_game_values(frame)
             if self.auto_send_var.get() and self.serial_controller.is_connected():
                 try:
-                    self.actuator_output.send(self.platform_command)
+                    pitch_position = self._axis_position(
+                        self.platform_command.pitch_deg,
+                        self.pitch_limit_var.get(),
+                        self.pitch_type_var.get(),
+                    )
+                    roll_position = self._axis_position(
+                        self.platform_command.roll_deg,
+                        self.roll_limit_var.get(),
+                        self.roll_type_var.get(),
+                    )
+                    self.actuator_output.send_positions(pitch_position, roll_position)
                     self._append_serial_log(
-                        f"Actuator output sent: P{self.platform_command.pitch_deg:.2f},R{self.platform_command.roll_deg:.2f}"
+                        f"Actuator command sent: [A{pitch_position}][B{roll_position}]"
                     )
                 except RuntimeError as exc:
                     self._append_serial_log(str(exc))
