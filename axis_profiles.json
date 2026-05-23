@@ -1,0 +1,10 @@
+{
+  "Default": {
+    "pitch_scale": 1.0,
+    "roll_scale": 1.0,
+    "pitch_accel_gain": 4.0,
+    "roll_accel_gain": 4.0,
+    "max_angle": 15.0,
+    "smoothing": 0.92
+  }
+}

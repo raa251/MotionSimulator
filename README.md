@@ -40,6 +40,26 @@ python MotionSimulator.py --pitch-scale 1.0 --roll-scale 1.0 --pitch-accel-gain 
 - `--log-file`: CSV file path for command logging
 - `--verbose`: Enable debug logging
 
-## Extending for hardware
+## GUI Mode
 
-Replace `ConsoleActuatorOutput` with a real actuator driver that sends the computed pitch/roll values to your motion platform.
+Run the script normally to launch the graphical user interface:
+
+```bash
+python MotionSimulator.py
+```
+
+The GUI includes:
+
+- `Serial Communication` tab for Arduino COM port, baud rate, connect/disconnect, custom sends, and receive log
+- `Game Output` tab for live ACC telemetry values such as pitch, roll, speed, and g-forces
+- `Axis Adjustments` tab for live axis tuning, profile save/load, and persisted axis settings
+
+## Arduino Integration
+
+The GUI can connect to an Arduino Uno R3 using PySerial. After connecting, enable `Auto-send current pitch/roll` to transmit live platform commands in the format:
+
+```
+P<pitch>,R<roll>\n
+```
+
+Replace `ConsoleActuatorOutput` with a real actuator driver if you want to forward the cue to your motion platform hardware directly.
