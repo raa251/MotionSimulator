@@ -21,7 +21,7 @@
       "None"
     ],
     "pitch_mapping_percents": [
-      10.0,
+      100.0,
       0.0,
       0.0,
       0.0,
@@ -45,7 +45,7 @@
       "None"
     ],
     "roll_mapping_percents": [
-      10.0,
+      100.0,
       0.0,
       0.0,
       0.0,
@@ -68,7 +68,7 @@
     "pitch_type": "rotational",
     "roll_type": "rotational",
     "pitch_mapping_sources": [
-      "None",
+      "Roll",
       "None",
       "None",
       "None",
@@ -80,7 +80,7 @@
       "None"
     ],
     "pitch_mapping_percents": [
-      0.0,
+      20.0,
       0.0,
       0.0,
       0.0,
@@ -92,7 +92,7 @@
       0.0
     ],
     "roll_mapping_sources": [
-      "None",
+      "Roll",
       "None",
       "None",
       "None",
@@ -104,7 +104,7 @@
       "None"
     ],
     "roll_mapping_percents": [
-      0.0,
+      20.0,
       0.0,
       0.0,
       0.0,
