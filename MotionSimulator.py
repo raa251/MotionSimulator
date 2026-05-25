@@ -26,6 +26,15 @@ import serial
 import serial.tools.list_ports
 
 PROFILE_PATH = Path(__file__).resolve().parent / "axis_profiles.json"
+TELEMETRY_SOURCE_OPTIONS = [
+    "None",
+    "Pitch",
+    "Roll",
+    "Speed",
+    "G Longitudinal",
+    "G Lateral",
+    "G Vertical",
+]
 
 
 @dataclass(frozen=True)
@@ -358,10 +367,17 @@ class MotionSimulatorApp:
         self.max_history = 120
         self.root = tk.Tk()
         self.root.title("ACC 2DOF Motion Simulator")
-        self.root.geometry("760x520")
+        self.root.geometry("1140x780")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.chart_mode_var = tk.StringVar(value="One graph")
         self.sample_start_time = time.time()
+        self.pitch_mapping_source_vars = [tk.StringVar(value="None") for _ in range(10)]
+        self.pitch_mapping_percent_vars = [tk.DoubleVar(value=0.0) for _ in range(10)]
+        self.roll_mapping_source_vars = [tk.StringVar(value="None") for _ in range(10)]
+        self.roll_mapping_percent_vars = [tk.DoubleVar(value=0.0) for _ in range(10)]
+        self.axis_output_history: list[tuple[float, float, float]] = []
+        self.pitch_output_var = tk.StringVar(value="-")
+        self.roll_output_var = tk.StringVar(value="-")
 
         self._create_widgets()
         self._schedule_update()
@@ -373,14 +389,17 @@ class MotionSimulatorApp:
         self.serial_tab = ttk.Frame(notebook)
         self.game_tab = ttk.Frame(notebook)
         self.axis_tab = ttk.Frame(notebook)
+        self.axis_output_tab = ttk.Frame(notebook)
 
         notebook.add(self.serial_tab, text="Serial Communication")
         notebook.add(self.game_tab, text="Game Output")
         notebook.add(self.axis_tab, text="Axis Adjustments")
+        notebook.add(self.axis_output_tab, text="Axis Output")
 
         self._build_serial_tab()
         self._build_game_tab()
         self._build_axis_tab()
+        self._build_axis_output_tab()
 
     def _build_serial_tab(self) -> None:
         frame = ttk.Frame(self.serial_tab, padding=12)
@@ -492,7 +511,7 @@ class MotionSimulatorApp:
         frame = ttk.Frame(self.axis_tab, padding=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Axis Adjustments", font=(None, 12, "bold")).grid(row=0, column=0, sticky=tk.W, columnspan=3)
+        ttk.Label(frame, text="Axis Adjustments", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=4, sticky=tk.W)
 
         ttk.Label(frame, text="Profile:").grid(row=1, column=0, sticky=tk.W, pady=6)
         self.profile_var = tk.StringVar()
@@ -506,10 +525,20 @@ class MotionSimulatorApp:
         self.profile_combo.grid(row=1, column=1, sticky=tk.W, pady=6)
         self.profile_combo.bind("<<ComboboxSelected>>", lambda _: self._load_selected_profile())
         ttk.Button(frame, text="Load", command=self._load_selected_profile).grid(row=1, column=2, sticky=tk.W, padx=4)
-        ttk.Button(frame, text="Save", command=self._save_profile).grid(row=2, column=2, sticky=tk.W, padx=4)
-        ttk.Button(frame, text="Delete", command=self._delete_profile).grid(row=3, column=2, sticky=tk.W, padx=4)
+        ttk.Button(frame, text="Save", command=self._save_profile).grid(row=1, column=3, sticky=tk.W, padx=4)
+        ttk.Button(frame, text="Delete", command=self._delete_profile).grid(row=2, column=3, sticky=tk.W, padx=4)
 
-        ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=4, column=0, columnspan=3, sticky="ew", pady=12)
+        ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=3, column=0, columnspan=4, sticky="ew", pady=12)
+
+        pitch_frame = ttk.LabelFrame(frame, text="Pitch Axis", padding=10)
+        roll_frame = ttk.LabelFrame(frame, text="Roll Axis", padding=10)
+        pitch_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=(0, 4), pady=4)
+        roll_frame.grid(row=4, column=2, columnspan=2, sticky="nsew", padx=(4, 0), pady=4)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+        frame.grid_columnconfigure(3, weight=1)
+        frame.grid_rowconfigure(4, weight=1)
 
         self.pitch_scale_var = tk.DoubleVar(value=self.cue.pitch_scale)
         self.roll_scale_var = tk.DoubleVar(value=self.cue.roll_scale)
@@ -521,50 +550,104 @@ class MotionSimulatorApp:
         self.roll_type_var = tk.StringVar(value="rotational")
         self.smoothing_var = tk.DoubleVar(value=self.cue.smoothing)
 
-        ttk.Label(frame, text="Pitch axis type:").grid(row=5, column=0, sticky=tk.W, pady=6)
+        ttk.Label(pitch_frame, text="Type:").grid(row=0, column=0, sticky=tk.W, pady=4)
         self.pitch_type_select = ttk.Combobox(
-            frame,
+            pitch_frame,
             textvariable=self.pitch_type_var,
             values=["rotational", "linear"],
             state="readonly",
-            width=18,
+            width=16,
         )
-        self.pitch_type_select.grid(row=5, column=1, sticky=tk.W, pady=6)
+        self.pitch_type_select.grid(row=0, column=1, sticky=tk.W, pady=4)
         self.pitch_type_var.trace_add("write", self._update_axis_limit_labels)
 
-        ttk.Label(frame, text="Roll axis type:").grid(row=6, column=0, sticky=tk.W, pady=6)
+        self.pitch_limit_label = ttk.Label(pitch_frame, text="Limit (deg):")
+        self.pitch_limit_label.grid(row=1, column=0, sticky=tk.W, pady=4)
+        ttk.Entry(pitch_frame, textvariable=self.pitch_limit_var, width=12).grid(row=1, column=1, sticky=tk.W, pady=4)
+
+        ttk.Label(pitch_frame, text="Telemetry source:").grid(row=2, column=0, sticky=tk.W, pady=(8, 2))
+        ttk.Label(pitch_frame, text="Max %:").grid(row=2, column=1, sticky=tk.W, pady=(8, 2))
+        for index in range(10):
+            ttk.Combobox(
+                pitch_frame,
+                textvariable=self.pitch_mapping_source_vars[index],
+                values=TELEMETRY_SOURCE_OPTIONS,
+                state="readonly",
+                width=20,
+            ).grid(row=index + 3, column=0, sticky=tk.W, pady=2)
+            ttk.Spinbox(
+                pitch_frame,
+                from_=0,
+                to=100,
+                textvariable=self.pitch_mapping_percent_vars[index],
+                width=8,
+                increment=1,
+            ).grid(row=index + 3, column=1, sticky=tk.W, pady=2)
+
+        ttk.Label(roll_frame, text="Type:").grid(row=0, column=0, sticky=tk.W, pady=4)
         self.roll_type_select = ttk.Combobox(
-            frame,
+            roll_frame,
             textvariable=self.roll_type_var,
             values=["rotational", "linear"],
             state="readonly",
-            width=18,
+            width=16,
         )
-        self.roll_type_select.grid(row=6, column=1, sticky=tk.W, pady=6)
+        self.roll_type_select.grid(row=0, column=1, sticky=tk.W, pady=4)
         self.roll_type_var.trace_add("write", self._update_axis_limit_labels)
 
-        self.pitch_limit_label = ttk.Label(frame, text="Pitch limit (deg):")
-        self.pitch_limit_label.grid(row=7, column=0, sticky=tk.W, pady=6)
-        ttk.Entry(frame, textvariable=self.pitch_limit_var, width=12).grid(row=7, column=1, sticky=tk.W, pady=6)
-        ttk.Scale(frame, variable=self.pitch_limit_var, from_=0.0, to=100.0, orient=tk.HORIZONTAL, length=220).grid(row=7, column=2, sticky=tk.W, pady=6)
+        self.roll_limit_label = ttk.Label(roll_frame, text="Limit (deg):")
+        self.roll_limit_label.grid(row=1, column=0, sticky=tk.W, pady=4)
+        ttk.Entry(roll_frame, textvariable=self.roll_limit_var, width=12).grid(row=1, column=1, sticky=tk.W, pady=4)
 
-        self.roll_limit_label = ttk.Label(frame, text="Roll limit (deg):")
-        self.roll_limit_label.grid(row=8, column=0, sticky=tk.W, pady=6)
-        ttk.Entry(frame, textvariable=self.roll_limit_var, width=12).grid(row=8, column=1, sticky=tk.W, pady=6)
-        ttk.Scale(frame, variable=self.roll_limit_var, from_=0.0, to=100.0, orient=tk.HORIZONTAL, length=220).grid(row=8, column=2, sticky=tk.W, pady=6)
+        ttk.Label(roll_frame, text="Telemetry source:").grid(row=2, column=0, sticky=tk.W, pady=(8, 2))
+        ttk.Label(roll_frame, text="Max %:").grid(row=2, column=1, sticky=tk.W, pady=(8, 2))
+        for index in range(10):
+            ttk.Combobox(
+                roll_frame,
+                textvariable=self.roll_mapping_source_vars[index],
+                values=TELEMETRY_SOURCE_OPTIONS,
+                state="readonly",
+                width=20,
+            ).grid(row=index + 3, column=0, sticky=tk.W, pady=2)
+            ttk.Spinbox(
+                roll_frame,
+                from_=0,
+                to=100,
+                textvariable=self.roll_mapping_percent_vars[index],
+                width=8,
+                increment=1,
+            ).grid(row=index + 3, column=1, sticky=tk.W, pady=2)
 
-        self._build_axis_control(frame, 9, "Pitch scale", self.pitch_scale_var, 0.1, 3.0)
-        self._build_axis_control(frame, 10, "Roll scale", self.roll_scale_var, 0.1, 3.0)
-        self._build_axis_control(frame, 11, "Pitch accel gain", self.pitch_accel_gain_var, 0.0, 10.0)
-        self._build_axis_control(frame, 12, "Roll accel gain", self.roll_accel_gain_var, 0.0, 10.0)
-        self._build_axis_control(frame, 13, "Smoothing", self.smoothing_var, 0.80, 0.99, step=0.01)
-
-        ttk.Button(frame, text="Apply settings", command=self._set_cue_from_vars).grid(row=14, column=0, sticky=tk.W, pady=14)
+        ttk.Button(frame, text="Apply cue settings", command=self._set_cue_from_vars).grid(row=5, column=0, sticky=tk.W, pady=14)
         ttk.Label(
             frame,
-            text="Saved axis profiles are stored in axis_profiles.json.",
+            text="Current axis output is visible in the Axis Output tab.",
             foreground="gray",
-        ).grid(row=15, column=0, columnspan=3, sticky=tk.W, pady=(8, 0))
+        ).grid(row=5, column=1, columnspan=3, sticky=tk.W, pady=(8, 0))
+
+    def _build_axis_output_tab(self) -> None:
+        frame = ttk.Frame(self.axis_output_tab, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frame, text="Axis Output", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=4, sticky=tk.W)
+
+        ttk.Label(frame, text="Pitch output:").grid(row=1, column=0, sticky=tk.W, pady=6)
+        ttk.Label(frame, textvariable=self.pitch_output_var, width=16, anchor="center").grid(row=1, column=1, sticky="w", pady=6)
+        ttk.Label(frame, text="Roll output:").grid(row=1, column=2, sticky=tk.W, pady=6)
+        ttk.Label(frame, textvariable=self.roll_output_var, width=16, anchor="center").grid(row=1, column=3, sticky="w", pady=6)
+
+        graph_frame = ttk.Frame(frame)
+        graph_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+        frame.grid_columnconfigure(3, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+
+        self.output_figure = Figure(figsize=(8, 5), dpi=100)
+        self.output_canvas = FigureCanvasTkAgg(self.output_figure, master=graph_frame)
+        self.output_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self._update_axis_output_graph()
 
     def _build_axis_control(
         self,
@@ -579,6 +662,105 @@ class MotionSimulatorApp:
         ttk.Label(frame, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, pady=4)
         ttk.Entry(frame, textvariable=var, width=12).grid(row=row, column=1, sticky=tk.W, pady=4)
         ttk.Scale(frame, variable=var, from_=minimum, to=maximum, orient=tk.HORIZONTAL, length=220).grid(row=row, column=2, sticky=tk.W, pady=4)
+
+    def _telemetry_value(self, frame: TelemetryFrame, source: str) -> float:
+        return {
+            "Pitch": frame.pitch_deg,
+            "Roll": frame.roll_deg,
+            "Speed": frame.speed_kmh,
+            "G Longitudinal": frame.g_force_longitudinal,
+            "G Lateral": frame.g_force_lateral,
+            "G Vertical": frame.g_force_vertical,
+        }.get(source, 0.0)
+
+    def _compute_axis_output(self, frame: TelemetryFrame, is_pitch: bool) -> float:
+        source_vars = self.pitch_mapping_source_vars if is_pitch else self.roll_mapping_source_vars
+        percent_vars = self.pitch_mapping_percent_vars if is_pitch else self.roll_mapping_percent_vars
+        total = 0.0
+        for source_var, percent_var in zip(source_vars, percent_vars):
+            source = source_var.get()
+            if source == "None":
+                continue
+            total += self._telemetry_value(frame, source) * (percent_var.get() / 100.0)
+        return total
+
+    def _update_axis_output_values(self, frame: TelemetryFrame) -> None:
+        pitch_output = self._clamp_axis_value(
+            self._compute_axis_output(frame, True),
+            self.pitch_limit_var.get(),
+        )
+        roll_output = self._clamp_axis_value(
+            self._compute_axis_output(frame, False),
+            self.roll_limit_var.get(),
+        )
+
+        self.pitch_output_var.set(
+            f"{pitch_output:.2f} {self._unit_for_type(self.pitch_type_var.get())}"
+        )
+        self.roll_output_var.set(
+            f"{roll_output:.2f} {self._unit_for_type(self.roll_type_var.get())}"
+        )
+
+        self.current_pitch_output = pitch_output
+        self.current_roll_output = roll_output
+        self.axis_output_history.append((frame.timestamp, pitch_output, roll_output))
+        while len(self.axis_output_history) > self.max_history:
+            self.axis_output_history.pop(0)
+
+    def _update_axis_output_graph(self) -> None:
+        self.output_figure.clear()
+        history = self.axis_output_history
+        if not history:
+            ax = self.output_figure.add_subplot(2, 1, 1)
+            ax.set_title("Pitch Axis Output")
+            ax.set_xlabel("Seconds")
+            ax.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
+            ax.grid(True)
+            ax = self.output_figure.add_subplot(2, 1, 2)
+            ax.set_title("Roll Axis Output")
+            ax.set_xlabel("Seconds")
+            ax.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
+            ax.grid(True)
+            self.output_figure.tight_layout()
+            self.output_canvas.draw()
+            return
+
+        timestamps = [row[0] - history[0][0] for row in history]
+        pitch_values = [row[1] for row in history]
+        roll_values = [row[2] for row in history]
+
+        pitch_axis = self.output_figure.add_subplot(2, 1, 1)
+        pitch_axis.plot(timestamps, pitch_values, label="Pitch output")
+        pitch_axis.set_title("Pitch Axis Output")
+        pitch_axis.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
+        pitch_axis.set_xlabel("Seconds")
+        pitch_axis.grid(True)
+        if pitch_values:
+            pitch_min = min(pitch_values)
+            pitch_max = max(pitch_values)
+            if pitch_min == pitch_max:
+                margin = abs(pitch_min) * 0.1 + 1.0
+            else:
+                margin = max(0.1, (pitch_max - pitch_min) * 0.1)
+            pitch_axis.set_ylim(pitch_min - margin, pitch_max + margin)
+
+        roll_axis = self.output_figure.add_subplot(2, 1, 2)
+        roll_axis.plot(timestamps, roll_values, color="tab:orange", label="Roll output")
+        roll_axis.set_title("Roll Axis Output")
+        roll_axis.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
+        roll_axis.set_xlabel("Seconds")
+        roll_axis.grid(True)
+        if roll_values:
+            roll_min = min(roll_values)
+            roll_max = max(roll_values)
+            if roll_min == roll_max:
+                margin = abs(roll_min) * 0.1 + 1.0
+            else:
+                margin = max(0.1, (roll_max - roll_min) * 0.1)
+            roll_axis.set_ylim(roll_min - margin, roll_max + margin)
+
+        self.output_figure.tight_layout()
+        self.output_canvas.draw()
 
     def _update_axis_limit_labels(self, *args) -> None:
         self.pitch_limit_label.config(text=f"Pitch limit ({self._unit_for_type(self.pitch_type_var.get())}):")
@@ -820,16 +1002,18 @@ class MotionSimulatorApp:
             self._set_cue_from_vars()
             self.platform_command = self.cue.compute(frame)
             self._update_game_values(frame)
+            self._update_axis_output_values(frame)
             self._update_charts()
+            self._update_axis_output_graph()
             if self.auto_send_var.get() and self.serial_controller.is_connected():
                 try:
                     pitch_position = self._axis_position(
-                        self.platform_command.pitch_deg,
+                        self.current_pitch_output,
                         self.pitch_limit_var.get(),
                         self.pitch_type_var.get(),
                     )
                     roll_position = self._axis_position(
-                        self.platform_command.roll_deg,
+                        self.current_roll_output,
                         self.roll_limit_var.get(),
                         self.roll_type_var.get(),
                     )
