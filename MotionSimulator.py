@@ -67,8 +67,12 @@ class AxisProfile:
     pitch_type: str
     roll_type: str
     smoothing: float
+    pitch_mapping_sources: list[str]
+    pitch_mapping_percents: list[float]
+    roll_mapping_sources: list[str]
+    roll_mapping_percents: list[float]
 
-    def to_dict(self) -> dict[str, str | float]:
+    def to_dict(self) -> dict[str, object]:
         return {
             "pitch_scale": self.pitch_scale,
             "roll_scale": self.roll_scale,
@@ -78,6 +82,10 @@ class AxisProfile:
             "roll_limit": self.roll_limit,
             "pitch_type": self.pitch_type,
             "roll_type": self.roll_type,
+            "pitch_mapping_sources": self.pitch_mapping_sources,
+            "pitch_mapping_percents": self.pitch_mapping_percents,
+            "roll_mapping_sources": self.roll_mapping_sources,
+            "roll_mapping_percents": self.roll_mapping_percents,
             "smoothing": self.smoothing,
         }
 
@@ -88,6 +96,28 @@ class AxisProfile:
         if pitch_limit is None or roll_limit is None:
             pitch_limit = float(data.get("max_angle", 15.0))
             roll_limit = float(data.get("max_angle", 15.0))
+
+        # Helper to coerce mapping lists safely
+        def _coerce_str_list(value, default):
+            if isinstance(value, list):
+                return [str(v) for v in value][:10]
+            return default
+
+        def _coerce_float_list(value, default):
+            if isinstance(value, list):
+                out = []
+                for v in value[:10]:
+                    try:
+                        out.append(float(v))
+                    except Exception:
+                        out.append(0.0)
+                return out
+            return default
+
+        pitch_mapping_sources = _coerce_str_list(data.get("pitch_mapping_sources"), ["None"] * 10)
+        pitch_mapping_percents = _coerce_float_list(data.get("pitch_mapping_percents"), [0.0] * 10)
+        roll_mapping_sources = _coerce_str_list(data.get("roll_mapping_sources"), ["None"] * 10)
+        roll_mapping_percents = _coerce_float_list(data.get("roll_mapping_percents"), [0.0] * 10)
 
         return cls(
             name=name,
@@ -100,6 +130,10 @@ class AxisProfile:
             pitch_type=str(data.get("pitch_type", "rotational")),
             roll_type=str(data.get("roll_type", "rotational")),
             smoothing=float(data.get("smoothing", 0.92)),
+            pitch_mapping_sources=pitch_mapping_sources,
+            pitch_mapping_percents=pitch_mapping_percents,
+            roll_mapping_sources=roll_mapping_sources,
+            roll_mapping_percents=roll_mapping_percents,
         )
 
 
@@ -524,9 +558,14 @@ class MotionSimulatorApp:
         )
         self.profile_combo.grid(row=1, column=1, sticky=tk.W, pady=6)
         self.profile_combo.bind("<<ComboboxSelected>>", lambda _: self._load_selected_profile())
-        ttk.Button(frame, text="Load", command=self._load_selected_profile).grid(row=1, column=2, sticky=tk.W, padx=4)
-        ttk.Button(frame, text="Save", command=self._save_profile).grid(row=1, column=3, sticky=tk.W, padx=4)
-        ttk.Button(frame, text="Delete", command=self._delete_profile).grid(row=2, column=3, sticky=tk.W, padx=4)
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=1, column=2, columnspan=2, sticky="ew", pady=6)
+        load_btn = ttk.Button(button_frame, text="Load", command=self._load_selected_profile)
+        save_btn = ttk.Button(button_frame, text="Save", command=self._save_profile)
+        delete_btn = ttk.Button(button_frame, text="Delete", command=self._delete_profile)
+        load_btn.pack(side=tk.LEFT, padx=6)
+        save_btn.pack(side=tk.LEFT, padx=6)
+        delete_btn.pack(side=tk.LEFT, padx=6)
 
         ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=3, column=0, columnspan=4, sticky="ew", pady=12)
 
@@ -561,7 +600,7 @@ class MotionSimulatorApp:
         self.pitch_type_select.grid(row=0, column=1, sticky=tk.W, pady=4)
         self.pitch_type_var.trace_add("write", self._update_axis_limit_labels)
 
-        self.pitch_limit_label = ttk.Label(pitch_frame, text="Limit (deg):")
+        self.pitch_limit_label = ttk.Label(pitch_frame, text="Limit (±deg):")
         self.pitch_limit_label.grid(row=1, column=0, sticky=tk.W, pady=4)
         ttk.Entry(pitch_frame, textvariable=self.pitch_limit_var, width=12).grid(row=1, column=1, sticky=tk.W, pady=4)
 
@@ -595,7 +634,7 @@ class MotionSimulatorApp:
         self.roll_type_select.grid(row=0, column=1, sticky=tk.W, pady=4)
         self.roll_type_var.trace_add("write", self._update_axis_limit_labels)
 
-        self.roll_limit_label = ttk.Label(roll_frame, text="Limit (deg):")
+        self.roll_limit_label = ttk.Label(roll_frame, text="Limit (±deg):")
         self.roll_limit_label.grid(row=1, column=0, sticky=tk.W, pady=4)
         ttk.Entry(roll_frame, textvariable=self.roll_limit_var, width=12).grid(row=1, column=1, sticky=tk.W, pady=4)
 
@@ -763,8 +802,8 @@ class MotionSimulatorApp:
         self.output_canvas.draw()
 
     def _update_axis_limit_labels(self, *args) -> None:
-        self.pitch_limit_label.config(text=f"Limit ({self._unit_for_type(self.pitch_type_var.get())}):")
-        self.roll_limit_label.config(text=f"Limit ({self._unit_for_type(self.roll_type_var.get())}):")
+        self.pitch_limit_label.config(text=f"Limit (±{self._unit_for_type(self.pitch_type_var.get())}):")
+        self.roll_limit_label.config(text=f"Limit (±{self._unit_for_type(self.roll_type_var.get())}):")
 
     def _unit_for_type(self, axis_type: str) -> str:
         return "mm" if axis_type == "linear" else "deg"
@@ -789,6 +828,25 @@ class MotionSimulatorApp:
         self.pitch_type_var.set(profile.pitch_type)
         self.roll_type_var.set(profile.roll_type)
         self.smoothing_var.set(profile.smoothing)
+        # Restore telemetry mapping selections (ensure lists have 10 entries)
+        p_sources = (profile.pitch_mapping_sources or [])[:10]
+        p_percents = (profile.pitch_mapping_percents or [])[:10]
+        r_sources = (profile.roll_mapping_sources or [])[:10]
+        r_percents = (profile.roll_mapping_percents or [])[:10]
+        # Pad to 10
+        while len(p_sources) < 10:
+            p_sources.append("None")
+        while len(p_percents) < 10:
+            p_percents.append(0.0)
+        while len(r_sources) < 10:
+            r_sources.append("None")
+        while len(r_percents) < 10:
+            r_percents.append(0.0)
+        for i in range(10):
+            self.pitch_mapping_source_vars[i].set(p_sources[i])
+            self.pitch_mapping_percent_vars[i].set(float(p_percents[i]))
+            self.roll_mapping_source_vars[i].set(r_sources[i])
+            self.roll_mapping_percent_vars[i].set(float(r_percents[i]))
         self._set_cue_from_vars()
         self._update_axis_limit_labels()
         self._append_serial_log(f"Loaded profile '{name}'")
@@ -797,6 +855,10 @@ class MotionSimulatorApp:
         name = simpledialog.askstring("Save profile", "Enter a profile name:", parent=self.root)
         if not name:
             return
+        pitch_sources = [var.get() for var in self.pitch_mapping_source_vars]
+        pitch_percents = [var.get() for var in self.pitch_mapping_percent_vars]
+        roll_sources = [var.get() for var in self.roll_mapping_source_vars]
+        roll_percents = [var.get() for var in self.roll_mapping_percent_vars]
         profile = AxisProfile(
             name=name,
             pitch_scale=self.pitch_scale_var.get(),
@@ -808,6 +870,10 @@ class MotionSimulatorApp:
             pitch_type=self.pitch_type_var.get(),
             roll_type=self.roll_type_var.get(),
             smoothing=self.smoothing_var.get(),
+            pitch_mapping_sources=pitch_sources,
+            pitch_mapping_percents=pitch_percents,
+            roll_mapping_sources=roll_sources,
+            roll_mapping_percents=roll_percents,
         )
         self.profile_manager.save_profile(profile)
         self.profile_combo["values"] = self._profile_names()
