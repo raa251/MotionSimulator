@@ -4,7 +4,21 @@
     "roll_scale": 1.0,
     "pitch_accel_gain": 4.0,
     "roll_accel_gain": 4.0,
-    "max_angle": 15.0,
+    "pitch_limit": 15.0,
+    "roll_limit": 15.0,
+    "pitch_type": "rotational",
+    "roll_type": "rotational",
+    "smoothing": 0.92
+  },
+  "Setting1": {
+    "pitch_scale": 1.0,
+    "roll_scale": 1.0,
+    "pitch_accel_gain": 4.0,
+    "roll_accel_gain": 4.0,
+    "pitch_limit": 15.0,
+    "roll_limit": 15.0,
+    "pitch_type": "rotational",
+    "roll_type": "rotational",
     "smoothing": 0.92
   }
 }

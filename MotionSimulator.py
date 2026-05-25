@@ -530,8 +530,8 @@ class MotionSimulatorApp:
 
         ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=3, column=0, columnspan=4, sticky="ew", pady=12)
 
-        pitch_frame = ttk.LabelFrame(frame, text="Pitch Axis", padding=10)
-        roll_frame = ttk.LabelFrame(frame, text="Roll Axis", padding=10)
+        pitch_frame = ttk.LabelFrame(frame, text="Axis 1", padding=10)
+        roll_frame = ttk.LabelFrame(frame, text="Axis 2", padding=10)
         pitch_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", padx=(0, 4), pady=4)
         roll_frame.grid(row=4, column=2, columnspan=2, sticky="nsew", padx=(4, 0), pady=4)
         frame.grid_columnconfigure(0, weight=1)
@@ -618,7 +618,7 @@ class MotionSimulatorApp:
                 increment=1,
             ).grid(row=index + 3, column=1, sticky=tk.W, pady=2)
 
-        ttk.Button(frame, text="Apply cue settings", command=self._set_cue_from_vars).grid(row=5, column=0, sticky=tk.W, pady=14)
+        ttk.Button(frame, text="Apply current settings", command=self._set_cue_from_vars).grid(row=5, column=0, sticky=tk.W, pady=14)
         ttk.Label(
             frame,
             text="Current axis output is visible in the Axis Output tab.",
@@ -631,9 +631,9 @@ class MotionSimulatorApp:
 
         ttk.Label(frame, text="Axis Output", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=4, sticky=tk.W)
 
-        ttk.Label(frame, text="Pitch output:").grid(row=1, column=0, sticky=tk.W, pady=6)
+        ttk.Label(frame, text="Axis 1 output:").grid(row=1, column=0, sticky=tk.W, pady=6)
         ttk.Label(frame, textvariable=self.pitch_output_var, width=16, anchor="center").grid(row=1, column=1, sticky="w", pady=6)
-        ttk.Label(frame, text="Roll output:").grid(row=1, column=2, sticky=tk.W, pady=6)
+        ttk.Label(frame, text="Axis 2 output:").grid(row=1, column=2, sticky=tk.W, pady=6)
         ttk.Label(frame, textvariable=self.roll_output_var, width=16, anchor="center").grid(row=1, column=3, sticky="w", pady=6)
 
         graph_frame = ttk.Frame(frame)
@@ -712,12 +712,12 @@ class MotionSimulatorApp:
         history = self.axis_output_history
         if not history:
             ax = self.output_figure.add_subplot(2, 1, 1)
-            ax.set_title("Pitch Axis Output")
+            ax.set_title("Axis 1 Output")
             ax.set_xlabel("Seconds")
             ax.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
             ax.grid(True)
             ax = self.output_figure.add_subplot(2, 1, 2)
-            ax.set_title("Roll Axis Output")
+            ax.set_title("Axis 2 Output")
             ax.set_xlabel("Seconds")
             ax.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
             ax.grid(True)
@@ -730,8 +730,8 @@ class MotionSimulatorApp:
         roll_values = [row[2] for row in history]
 
         pitch_axis = self.output_figure.add_subplot(2, 1, 1)
-        pitch_axis.plot(timestamps, pitch_values, label="Pitch output")
-        pitch_axis.set_title("Pitch Axis Output")
+        pitch_axis.plot(timestamps, pitch_values, label="Axis 1 output")
+        pitch_axis.set_title("Axis 1 Output")
         pitch_axis.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
         pitch_axis.set_xlabel("Seconds")
         pitch_axis.grid(True)
@@ -745,8 +745,8 @@ class MotionSimulatorApp:
             pitch_axis.set_ylim(pitch_min - margin, pitch_max + margin)
 
         roll_axis = self.output_figure.add_subplot(2, 1, 2)
-        roll_axis.plot(timestamps, roll_values, color="tab:orange", label="Roll output")
-        roll_axis.set_title("Roll Axis Output")
+        roll_axis.plot(timestamps, roll_values, color="tab:orange", label="Axis 2 output")
+        roll_axis.set_title("Axis 2 Output")
         roll_axis.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
         roll_axis.set_xlabel("Seconds")
         roll_axis.grid(True)
@@ -763,8 +763,8 @@ class MotionSimulatorApp:
         self.output_canvas.draw()
 
     def _update_axis_limit_labels(self, *args) -> None:
-        self.pitch_limit_label.config(text=f"Pitch limit ({self._unit_for_type(self.pitch_type_var.get())}):")
-        self.roll_limit_label.config(text=f"Roll limit ({self._unit_for_type(self.roll_type_var.get())}):")
+        self.pitch_limit_label.config(text=f"Limit ({self._unit_for_type(self.pitch_type_var.get())}):")
+        self.roll_limit_label.config(text=f"Limit ({self._unit_for_type(self.roll_type_var.get())}):")
 
     def _unit_for_type(self, axis_type: str) -> str:
         return "mm" if axis_type == "linear" else "deg"
