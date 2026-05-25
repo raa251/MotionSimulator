@@ -17,6 +17,11 @@ from pathlib import Path
 from tkinter import messagebox, simpledialog, ttk
 from typing import Optional
 
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
 import serial
 import serial.tools.list_ports
 
@@ -349,10 +354,14 @@ class MotionSimulatorApp:
         self.actuator_output = SerialActuatorOutput(self.serial_controller)
         self.latest_frame: Optional[TelemetryFrame] = None
         self.platform_command: Optional[PlatformCommand] = None
+        self.telemetry_history: list[TelemetryFrame] = []
+        self.max_history = 120
         self.root = tk.Tk()
         self.root.title("ACC 2DOF Motion Simulator")
         self.root.geometry("760x520")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.chart_mode_var = tk.StringVar(value="One graph")
+        self.sample_start_time = time.time()
 
         self._create_widgets()
         self._schedule_update()
@@ -421,7 +430,26 @@ class MotionSimulatorApp:
         frame = ttk.Frame(self.game_tab, padding=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Live ACC Telemetry", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+        ttk.Label(frame, text="Live ACC Telemetry", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=4, sticky=tk.W)
+
+        self.use_sample_data_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame,
+            text="Use simulated telemetry",
+            variable=self.use_sample_data_var,
+            command=self._update_charts,
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=6)
+
+        ttk.Label(frame, text="Display charts:").grid(row=1, column=2, sticky=tk.W, pady=6, padx=(20, 0))
+        self.chart_mode_combo = ttk.Combobox(
+            frame,
+            textvariable=self.chart_mode_var,
+            values=["One graph", "Separate graphs"],
+            state="readonly",
+            width=16,
+        )
+        self.chart_mode_combo.grid(row=1, column=3, sticky=tk.W, pady=6)
+        self.chart_mode_combo.bind("<<ComboboxSelected>>", lambda _: self._update_charts())
 
         labels = [
             ("Pitch [deg]", "pitch"),
@@ -435,9 +463,30 @@ class MotionSimulatorApp:
 
         self.value_vars = {key: tk.StringVar(value="-") for _, key in labels}
 
+        left_value_frame = ttk.Frame(frame)
+        left_value_frame.grid(row=2, column=0, rowspan=7, columnspan=2, sticky="nsew")
+        left_value_frame.grid_rowconfigure(0, weight=1)
+        left_value_frame.grid_rowconfigure(len(labels) + 1, weight=1)
+        left_value_frame.grid_columnconfigure(0, weight=1)
+        left_value_frame.grid_columnconfigure(1, weight=1)
+
         for index, (label, key) in enumerate(labels, start=1):
-            ttk.Label(frame, text=label + ":").grid(row=index, column=0, sticky=tk.W, pady=4)
-            ttk.Label(frame, textvariable=self.value_vars[key], width=24).grid(row=index, column=1, sticky=tk.W, pady=4)
+            ttk.Label(left_value_frame, text=label + ":").grid(row=index, column=0, sticky=tk.W, pady=4)
+            ttk.Label(left_value_frame, textvariable=self.value_vars[key], width=24, anchor="center").grid(row=index, column=1, sticky="ew", pady=4)
+
+        chart_frame = ttk.Frame(frame)
+        chart_frame.grid(row=2, column=2, rowspan=7, columnspan=2, sticky="nsew", padx=(20, 0), pady=(0, 4))
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+        frame.grid_columnconfigure(3, weight=1)
+        frame.grid_rowconfigure(2, weight=1)
+
+        self.figure = Figure(figsize=(6, 4), dpi=100)
+        self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
+        self.canvas_widget = self.canvas.get_tk_widget()
+        self.canvas_widget.pack(fill=tk.BOTH, expand=True)
+        self._update_charts()
 
     def _build_axis_tab(self) -> None:
         frame = ttk.Frame(self.axis_tab, padding=12)
@@ -664,18 +713,114 @@ class MotionSimulatorApp:
         self.value_vars["g_vert"].set(f"{frame.g_force_vertical:.2f}")
         self.value_vars["updated"].set(time.strftime("%H:%M:%S", time.localtime(frame.timestamp)))
 
+    def _update_charts(self) -> None:
+        self.figure.clear()
+        if not self.telemetry_history:
+            ax = self.figure.add_subplot(1, 1, 1)
+            ax.set_title("Telemetry Overview")
+            ax.set_xlabel("Seconds")
+            ax.set_ylabel("Value")
+            ax.grid(True)
+            self.figure.tight_layout()
+            self.canvas.draw()
+            return
+
+        history = self.telemetry_history
+        x_values = [frame.timestamp - history[0].timestamp for frame in history]
+        if self.chart_mode_var.get() == "One graph":
+            ax = self.figure.add_subplot(1, 1, 1)
+            series = [
+                ([frame.pitch_deg for frame in history], "Pitch [deg]"),
+                ([frame.roll_deg for frame in history], "Roll [deg]"),
+                ([frame.speed_kmh for frame in history], "Speed [km/h]"),
+                ([frame.g_force_longitudinal for frame in history], "G Longitudinal"),
+                ([frame.g_force_lateral for frame in history], "G Lateral"),
+                ([frame.g_force_vertical for frame in history], "G Vertical"),
+            ]
+            all_values = []
+            for values, label in series:
+                ax.plot(x_values, values, label=label)
+                all_values.extend(values)
+
+            if all_values:
+                y_min = min(all_values)
+                y_max = max(all_values)
+                if y_min == y_max:
+                    margin = abs(y_min) * 0.1 + 1.0
+                    ax.set_ylim(y_min - margin, y_max + margin)
+                else:
+                    margin = max(0.1, (y_max - y_min) * 0.1)
+                    ax.set_ylim(y_min - margin, y_max + margin)
+
+            ax.set_xlabel("Seconds")
+            ax.set_title("Telemetry Overview")
+            ax.legend(loc="upper left", fontsize="small")
+            ax.grid(True)
+        else:
+            plot_data = [
+                ("Pitch [deg]", [frame.pitch_deg for frame in history]),
+                ("Roll [deg]", [frame.roll_deg for frame in history]),
+                ("Speed [km/h]", [frame.speed_kmh for frame in history]),
+                ("G Longitudinal", [frame.g_force_longitudinal for frame in history]),
+                ("G Lateral", [frame.g_force_lateral for frame in history]),
+                ("G Vertical", [frame.g_force_vertical for frame in history]),
+            ]
+            axes = [self.figure.add_subplot(3, 2, index + 1) for index in range(len(plot_data))]
+            for ax, (title, values) in zip(axes, plot_data):
+                ax.plot(x_values, values)
+                if values:
+                    y_min = min(values)
+                    y_max = max(values)
+                    if y_min == y_max:
+                        margin = abs(y_min) * 0.1 + 1.0
+                        ax.set_ylim(y_min - margin, y_max + margin)
+                    else:
+                        margin = max(0.1, (y_max - y_min) * 0.1)
+                        ax.set_ylim(y_min - margin, y_max + margin)
+                ax.set_title(title)
+                ax.grid(True)
+                ax.set_xlabel("Seconds")
+        self.figure.tight_layout()
+        self.canvas.draw()
+
+    def _generate_sample_frame(self) -> TelemetryFrame:
+        elapsed = time.time() - self.sample_start_time
+        pitch = math.sin(elapsed * 0.8) * 12.0
+        roll = math.cos(elapsed * 1.1) * 10.0
+        g_long = math.sin(elapsed * 0.5) * 2.4
+        g_lat = math.cos(elapsed * 0.7) * 2.0
+        g_vert = math.sin(elapsed * 1.3) * 1.8
+        speed = max(40.0 + math.sin(elapsed * 0.25) * 50.0, 0.0)
+        return TelemetryFrame(
+            timestamp=time.time(),
+            pitch_deg=pitch,
+            roll_deg=roll,
+            g_force_longitudinal=g_long,
+            g_force_lateral=g_lat,
+            g_force_vertical=g_vert,
+            speed_kmh=speed,
+        )
+
     def _update_serial_status(self) -> None:
         status = "Connected" if self.serial_controller.is_connected() else "Disconnected"
         self.serial_status_var.set(status)
         self.connect_button.config(text="Disconnect" if self.serial_controller.is_connected() else "Connect")
 
     def _schedule_update(self) -> None:
-        frame = self.receiver.get_latest()
+        if self.use_sample_data_var.get():
+            frame = self._generate_sample_frame()
+        else:
+            frame = self.receiver.get_latest()
+
         if frame is not None:
             self.latest_frame = frame
+            self.telemetry_history.append(frame)
+            while len(self.telemetry_history) > self.max_history:
+                self.telemetry_history.pop(0)
             self._set_cue_from_vars()
             self.platform_command = self.cue.compute(frame)
             self._update_game_values(frame)
+            self._update_charts()
             if self.auto_send_var.get() and self.serial_controller.is_connected():
                 try:
                     pitch_position = self._axis_position(
