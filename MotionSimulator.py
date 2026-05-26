@@ -413,6 +413,16 @@ class MotionSimulatorApp:
         self.pitch_output_var = tk.StringVar(value="-")
         self.roll_output_var = tk.StringVar(value="-")
         self.selected_profile: Optional[AxisProfile] = None
+        # Per-telemetry range values (±range). Keys correspond to the internal value keys
+        # used in the UI: 'pitch','roll','speed','g_long','g_lat','g_vert'
+        self.telemetry_range_vars: dict[str, tk.DoubleVar] = {
+            "pitch": tk.DoubleVar(value=15.0),
+            "roll": tk.DoubleVar(value=15.0),
+            "speed": tk.DoubleVar(value=100.0),
+            "g_long": tk.DoubleVar(value=3.0),
+            "g_lat": tk.DoubleVar(value=3.0),
+            "g_vert": tk.DoubleVar(value=2.0),
+        }
 
         self._create_widgets()
         self._schedule_update()
@@ -514,22 +524,31 @@ class MotionSimulatorApp:
             ("G Vertical", "g_vert"),
             ("Last update", "updated"),
         ]
-
         self.value_vars = {key: tk.StringVar(value="-") for _, key in labels}
 
         left_value_frame = ttk.Frame(frame)
-        left_value_frame.grid(row=2, column=0, rowspan=7, columnspan=2, sticky="nsew")
+        left_value_frame.grid(row=2, column=0, rowspan=7, columnspan=3, sticky="nsew")
         left_value_frame.grid_rowconfigure(0, weight=1)
         left_value_frame.grid_rowconfigure(len(labels) + 1, weight=1)
         left_value_frame.grid_columnconfigure(0, weight=1)
         left_value_frame.grid_columnconfigure(1, weight=1)
+        left_value_frame.grid_columnconfigure(2, weight=1)
 
         for index, (label, key) in enumerate(labels, start=1):
             ttk.Label(left_value_frame, text=label + ":").grid(row=index, column=0, sticky=tk.W, pady=4)
-            ttk.Label(left_value_frame, textvariable=self.value_vars[key], width=24, anchor="center").grid(row=index, column=1, sticky="ew", pady=4)
+            ttk.Label(left_value_frame, textvariable=self.value_vars[key], width=18, anchor="center").grid(row=index, column=1, sticky="ew", pady=4)
+            # Add a range input for live clamping/normalization for all telemetry keys except the timestamp
+            if key != "updated":
+                range_var = self.telemetry_range_vars.get(key)
+                if range_var is None:
+                    range_var = tk.DoubleVar(value=0.0)
+                    self.telemetry_range_vars[key] = range_var
+                ttk.Entry(left_value_frame, textvariable=range_var, width=10).grid(row=index, column=2, sticky=tk.W, pady=4)
+            else:
+                ttk.Label(left_value_frame, text="", width=10).grid(row=index, column=2, sticky=tk.W, pady=4)
 
         chart_frame = ttk.Frame(frame)
-        chart_frame.grid(row=2, column=2, rowspan=7, columnspan=2, sticky="nsew", padx=(20, 0), pady=(0, 4))
+        chart_frame.grid(row=2, column=3, rowspan=7, columnspan=1, sticky="nsew", padx=(20, 0), pady=(0, 4))
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(2, weight=1)
@@ -715,6 +734,38 @@ class MotionSimulatorApp:
             "G Vertical": frame.g_force_vertical,
         }.get(source, 0.0)
 
+    def _normalized_telemetry_value(self, frame: TelemetryFrame, source: str) -> float:
+        """Return telemetry value normalized to [-1, +1] based on the user-defined range.
+
+        If a user range is not defined or is 0, fall back to reasonable defaults.
+        """
+        raw = self._telemetry_value(frame, source)
+        # Map source string to the internal key used by telemetry_range_vars
+        source_to_key = {
+            "Pitch": "pitch",
+            "Roll": "roll",
+            "Speed": "speed",
+            "G Longitudinal": "g_long",
+            "G Lateral": "g_lat",
+            "G Vertical": "g_vert",
+        }
+        key = source_to_key.get(source)
+        range_var = None
+        if key is not None:
+            range_var = self.telemetry_range_vars.get(key)
+
+        if range_var is not None:
+            r = float(range_var.get())
+        else:
+            # sensible defaults if user hasn't set a range
+            defaults = {"Pitch": 15.0, "Roll": 15.0, "Speed": 100.0, "G Longitudinal": 3.0, "G Lateral": 3.0, "G Vertical": 2.0}
+            r = float(defaults.get(source, 1.0))
+
+        if r <= 0:
+            return 0.0
+        val = max(min(raw, r), -r)
+        return val / r
+
     def _compute_axis_output(self, frame: TelemetryFrame, is_pitch: bool) -> float:
         source_vars = self.pitch_mapping_source_vars if is_pitch else self.roll_mapping_source_vars
         percent_vars = self.pitch_mapping_percent_vars if is_pitch else self.roll_mapping_percent_vars
@@ -723,8 +774,12 @@ class MotionSimulatorApp:
             source = source_var.get()
             if source == "None":
                 continue
-            total += self._telemetry_value(frame, source) * (percent_var.get() / 100.0)
-        return total
+            normalized = self._normalized_telemetry_value(frame, source)
+            total += normalized * (percent_var.get() / 100.0)
+        # total is now a normalized contribution (-inf..+inf depending on sum of percents)
+        # Multiply by axis limit so the result is in axis units (deg or mm)
+        limit = self.pitch_limit_var.get() if is_pitch else self.roll_limit_var.get()
+        return total * limit
 
     def _update_axis_output_values(self, frame: TelemetryFrame) -> None:
         pitch_output = self._clamp_axis_value(
@@ -1002,12 +1057,28 @@ class MotionSimulatorApp:
         self.serial_log.configure(state=tk.DISABLED)
 
     def _update_game_values(self, frame: TelemetryFrame) -> None:
-        self.value_vars["pitch"].set(f"{frame.pitch_deg:.2f}")
-        self.value_vars["roll"].set(f"{frame.roll_deg:.2f}")
-        self.value_vars["speed"].set(f"{frame.speed_kmh:.1f}")
-        self.value_vars["g_long"].set(f"{frame.g_force_longitudinal:.2f}")
-        self.value_vars["g_lat"].set(f"{frame.g_force_lateral:.2f}")
-        self.value_vars["g_vert"].set(f"{frame.g_force_vertical:.2f}")
+        # For each telemetry field, clamp to the user-defined ±range and display that value.
+        mapping = {
+            "pitch": ("Pitch", frame.pitch_deg),
+            "roll": ("Roll", frame.roll_deg),
+            "speed": ("Speed", frame.speed_kmh),
+            "g_long": ("G Longitudinal", frame.g_force_longitudinal),
+            "g_lat": ("G Lateral", frame.g_force_lateral),
+            "g_vert": ("G Vertical", frame.g_force_vertical),
+        }
+        for key, (source_name, raw) in mapping.items():
+            range_var = self.telemetry_range_vars.get(key)
+            r = float(range_var.get()) if range_var is not None else 0.0
+            if r > 0:
+                limited = max(min(raw, r), -r)
+            else:
+                limited = raw
+            # Format display
+            if key == "speed":
+                self.value_vars[key].set(f"{limited:.1f}")
+            else:
+                self.value_vars[key].set(f"{limited:.2f}")
+
         self.value_vars["updated"].set(time.strftime("%H:%M:%S", time.localtime(frame.timestamp)))
 
     def _update_charts(self) -> None:
