@@ -425,6 +425,7 @@ class MotionSimulatorApp:
         }
 
         self._create_widgets()
+        self._apply_initial_settings()
         self._schedule_update()
 
     def _create_widgets(self) -> None:
@@ -445,6 +446,34 @@ class MotionSimulatorApp:
         self._build_game_tab()
         self._build_axis_tab()
         self._build_axis_output_tab()
+
+    def _apply_initial_settings(self) -> None:
+        """Capture current UI values as the applied settings used for output."""
+        def _list_get(vars_list):
+            return [v.get() for v in vars_list]
+
+        # Ensure mapping lists have sensible defaults
+        pitch_sources = _list_get(self.pitch_mapping_source_vars)
+        pitch_percents = [float(v.get()) for v in self.pitch_mapping_percent_vars]
+        roll_sources = _list_get(self.roll_mapping_source_vars)
+        roll_percents = [float(v.get()) for v in self.roll_mapping_percent_vars]
+
+        self.applied_settings = {
+            "pitch_mapping_sources": pitch_sources,
+            "pitch_mapping_percents": pitch_percents,
+            "roll_mapping_sources": roll_sources,
+            "roll_mapping_percents": roll_percents,
+            "telemetry_ranges": {k: float(v.get()) for k, v in self.telemetry_range_vars.items()},
+            "pitch_limit": float(self.pitch_limit_var.get()),
+            "roll_limit": float(self.roll_limit_var.get()),
+            "pitch_type": self.pitch_type_var.get(),
+            "roll_type": self.roll_type_var.get(),
+            "pitch_scale": float(self.pitch_scale_var.get()),
+            "roll_scale": float(self.roll_scale_var.get()),
+            "pitch_accel_gain": float(self.pitch_accel_gain_var.get()),
+            "roll_accel_gain": float(self.roll_accel_gain_var.get()),
+            "smoothing": float(self.smoothing_var.get()),
+        }
 
     def _build_serial_tab(self) -> None:
         frame = ttk.Frame(self.serial_tab, padding=12)
@@ -734,10 +763,10 @@ class MotionSimulatorApp:
             "G Vertical": frame.g_force_vertical,
         }.get(source, 0.0)
 
-    def _normalized_telemetry_value(self, frame: TelemetryFrame, source: str) -> float:
-        """Return telemetry value normalized to [-1, +1] based on the user-defined range.
+    def _normalized_telemetry_value(self, frame: TelemetryFrame, source: str, range_override: Optional[float] = None) -> float:
+        """Return telemetry value normalized to [-1, +1] based on the provided range or user-defined range.
 
-        If a user range is not defined or is 0, fall back to reasonable defaults.
+        If `range_override` is given it is used; otherwise the UI range is used with sensible defaults.
         """
         raw = self._telemetry_value(frame, source)
         # Map source string to the internal key used by telemetry_range_vars
@@ -749,17 +778,17 @@ class MotionSimulatorApp:
             "G Lateral": "g_lat",
             "G Vertical": "g_vert",
         }
-        key = source_to_key.get(source)
-        range_var = None
-        if key is not None:
-            range_var = self.telemetry_range_vars.get(key)
 
-        if range_var is not None:
-            r = float(range_var.get())
+        if range_override is not None:
+            r = float(range_override)
         else:
-            # sensible defaults if user hasn't set a range
-            defaults = {"Pitch": 15.0, "Roll": 15.0, "Speed": 100.0, "G Longitudinal": 3.0, "G Lateral": 3.0, "G Vertical": 2.0}
-            r = float(defaults.get(source, 1.0))
+            key = source_to_key.get(source)
+            range_var = self.telemetry_range_vars.get(key) if key is not None else None
+            if range_var is not None:
+                r = float(range_var.get())
+            else:
+                defaults = {"Pitch": 15.0, "Roll": 15.0, "Speed": 100.0, "G Longitudinal": 3.0, "G Lateral": 3.0, "G Vertical": 2.0}
+                r = float(defaults.get(source, 1.0))
 
         if r <= 0:
             return 0.0
@@ -767,37 +796,55 @@ class MotionSimulatorApp:
         return val / r
 
     def _compute_axis_output(self, frame: TelemetryFrame, is_pitch: bool) -> float:
-        source_vars = self.pitch_mapping_source_vars if is_pitch else self.roll_mapping_source_vars
-        percent_vars = self.pitch_mapping_percent_vars if is_pitch else self.roll_mapping_percent_vars
+        # Use the applied settings snapshot for output calculation
+        if is_pitch:
+            sources = self.applied_settings.get("pitch_mapping_sources", [])
+            percents = self.applied_settings.get("pitch_mapping_percents", [])
+            limit = float(self.applied_settings.get("pitch_limit", 0.0))
+        else:
+            sources = self.applied_settings.get("roll_mapping_sources", [])
+            percents = self.applied_settings.get("roll_mapping_percents", [])
+            limit = float(self.applied_settings.get("roll_limit", 0.0))
+
+        # map telemetry name to internal key for ranges
+        source_to_key = {
+            "Pitch": "pitch",
+            "Roll": "roll",
+            "Speed": "speed",
+            "G Longitudinal": "g_long",
+            "G Lateral": "g_lat",
+            "G Vertical": "g_vert",
+        }
+
         total = 0.0
-        for source_var, percent_var in zip(source_vars, percent_vars):
-            source = source_var.get()
-            if source == "None":
+        for src, pct in zip(sources, percents):
+            if src == "None":
                 continue
-            normalized = self._normalized_telemetry_value(frame, source)
-            total += normalized * (percent_var.get() / 100.0)
-        # total is now a normalized contribution (-inf..+inf depending on sum of percents)
-        # Multiply by axis limit so the result is in axis units (deg or mm)
-        limit = self.pitch_limit_var.get() if is_pitch else self.roll_limit_var.get()
+            key = source_to_key.get(src)
+            range_val = None
+            if key is not None:
+                range_val = float(self.applied_settings.get("telemetry_ranges", {}).get(key, 0.0))
+            normalized = self._normalized_telemetry_value(frame, src, range_override=range_val)
+            total += normalized * (float(pct) / 100.0)
+
+        # total is normalized, multiply by applied limit to get axis units
         return total * limit
 
     def _update_axis_output_values(self, frame: TelemetryFrame) -> None:
-        pitch_output = self._clamp_axis_value(
-            self._compute_axis_output(frame, True),
-            self.pitch_limit_var.get(),
-        )
-        roll_output = self._clamp_axis_value(
-            self._compute_axis_output(frame, False),
-            self.roll_limit_var.get(),
-        )
+        # Compute outputs in axis units using applied settings
+        pitch_axis_value = self._compute_axis_output(frame, True)
+        roll_axis_value = self._compute_axis_output(frame, False)
 
-        self.pitch_output_var.set(
-            f"{pitch_output:.2f} {self._unit_for_type(self.pitch_type_var.get())}"
-        )
-        self.roll_output_var.set(
-            f"{roll_output:.2f} {self._unit_for_type(self.roll_type_var.get())}"
-        )
+        # Clamp to applied limits for display/storage
+        pitch_limit = float(self.applied_settings.get("pitch_limit", self.pitch_limit_var.get()))
+        roll_limit = float(self.applied_settings.get("roll_limit", self.roll_limit_var.get()))
+        pitch_output = self._clamp_axis_value(pitch_axis_value, pitch_limit)
+        roll_output = self._clamp_axis_value(roll_axis_value, roll_limit)
 
+        self.pitch_output_var.set(f"{pitch_output:.2f} {self._unit_for_type(self.applied_settings.get('pitch_type', self.pitch_type_var.get()))}")
+        self.roll_output_var.set(f"{roll_output:.2f} {self._unit_for_type(self.applied_settings.get('roll_type', self.roll_type_var.get()))}")
+
+        # Store the axis-unit outputs for motor position calculation
         self.current_pitch_output = pitch_output
         self.current_roll_output = roll_output
         self.axis_output_history.append((frame.timestamp, pitch_output, roll_output))
@@ -890,7 +937,25 @@ class MotionSimulatorApp:
         self.pitch_type_var.set(profile.pitch_type)
         self.roll_type_var.set(profile.roll_type)
         self.smoothing_var.set(profile.smoothing)
-        # Note: telemetry mapping selections are NOT applied yet, only shown for preview
+        # Restore telemetry mapping selections into the input boxes (preview only)
+        p_sources = (profile.pitch_mapping_sources or [])[:10]
+        p_percents = (profile.pitch_mapping_percents or [])[:10]
+        r_sources = (profile.roll_mapping_sources or [])[:10]
+        r_percents = (profile.roll_mapping_percents or [])[:10]
+        while len(p_sources) < 10:
+            p_sources.append("None")
+        while len(p_percents) < 10:
+            p_percents.append(0.0)
+        while len(r_sources) < 10:
+            r_sources.append("None")
+        while len(r_percents) < 10:
+            r_percents.append(0.0)
+        for i in range(10):
+            self.pitch_mapping_source_vars[i].set(p_sources[i])
+            self.pitch_mapping_percent_vars[i].set(float(p_percents[i]))
+            self.roll_mapping_source_vars[i].set(r_sources[i])
+            self.roll_mapping_percent_vars[i].set(float(r_percents[i]))
+        # Note: these values are loaded into the input boxes but not applied until the user presses Apply
         self._update_axis_limit_labels()
         self._append_serial_log(f"Selected profile '{name}' (not applied yet, press 'Apply current settings' to apply)")
 
@@ -975,33 +1040,41 @@ class MotionSimulatorApp:
             self._append_serial_log(f"Deleted profile '{name}'")
 
     def _set_cue_from_vars(self) -> None:
+        # Update the motion cue object
         self.cue.pitch_scale = self.pitch_scale_var.get()
         self.cue.roll_scale = self.roll_scale_var.get()
         self.cue.pitch_accel_gain = self.pitch_accel_gain_var.get()
         self.cue.roll_accel_gain = self.roll_accel_gain_var.get()
         self.cue.smoothing = self.smoothing_var.get()
-        self.cue.smoothing = self.smoothing_var.get()
-        
-        # If a profile was selected, apply its telemetry mappings as well
+
+        # Capture the current UI mapping and range settings as the applied settings
+        pitch_sources = [var.get() for var in self.pitch_mapping_source_vars]
+        pitch_percents = [float(var.get()) for var in self.pitch_mapping_percent_vars]
+        roll_sources = [var.get() for var in self.roll_mapping_source_vars]
+        roll_percents = [float(var.get()) for var in self.roll_mapping_percent_vars]
+        telemetry_ranges = {k: float(v.get()) for k, v in self.telemetry_range_vars.items()}
+
+        self.applied_settings = {
+            "pitch_mapping_sources": pitch_sources,
+            "pitch_mapping_percents": pitch_percents,
+            "roll_mapping_sources": roll_sources,
+            "roll_mapping_percents": roll_percents,
+            "telemetry_ranges": telemetry_ranges,
+            "pitch_limit": float(self.pitch_limit_var.get()),
+            "roll_limit": float(self.roll_limit_var.get()),
+            "pitch_type": self.pitch_type_var.get(),
+            "roll_type": self.roll_type_var.get(),
+            "pitch_scale": float(self.pitch_scale_var.get()),
+            "roll_scale": float(self.roll_scale_var.get()),
+            "pitch_accel_gain": float(self.pitch_accel_gain_var.get()),
+            "roll_accel_gain": float(self.roll_accel_gain_var.get()),
+            "smoothing": float(self.smoothing_var.get()),
+        }
+
         if self.selected_profile is not None:
-            p_sources = (self.selected_profile.pitch_mapping_sources or [])[:10]
-            p_percents = (self.selected_profile.pitch_mapping_percents or [])[:10]
-            r_sources = (self.selected_profile.roll_mapping_sources or [])[:10]
-            r_percents = (self.selected_profile.roll_mapping_percents or [])[:10]
-            while len(p_sources) < 10:
-                p_sources.append("None")
-            while len(p_percents) < 10:
-                p_percents.append(0.0)
-            while len(r_sources) < 10:
-                r_sources.append("None")
-            while len(r_percents) < 10:
-                r_percents.append(0.0)
-            for i in range(10):
-                self.pitch_mapping_source_vars[i].set(p_sources[i])
-                self.pitch_mapping_percent_vars[i].set(float(p_percents[i]))
-                self.roll_mapping_source_vars[i].set(r_sources[i])
-                self.roll_mapping_percent_vars[i].set(float(r_percents[i]))
             self._append_serial_log(f"Applied profile '{self.selected_profile.name}' settings")
+        else:
+            self._append_serial_log("Applied current axis adjustment settings")
 
     def _clamp_axis_value(self, value: float, limit: float) -> float:
         if limit <= 0:
@@ -1193,15 +1266,21 @@ class MotionSimulatorApp:
             self._update_axis_output_graph()
             if self.auto_send_var.get() and self.serial_controller.is_connected():
                 try:
+                    # Use applied settings for limits and axis types when sending commands
+                    pitch_limit = float(self.applied_settings.get("pitch_limit", self.pitch_limit_var.get()))
+                    roll_limit = float(self.applied_settings.get("roll_limit", self.roll_limit_var.get()))
+                    pitch_type = self.applied_settings.get("pitch_type", self.pitch_type_var.get())
+                    roll_type = self.applied_settings.get("roll_type", self.roll_type_var.get())
+
                     pitch_position = self._axis_position(
                         self.current_pitch_output,
-                        self.pitch_limit_var.get(),
-                        self.pitch_type_var.get(),
+                        pitch_limit,
+                        pitch_type,
                     )
                     roll_position = self._axis_position(
                         self.current_roll_output,
-                        self.roll_limit_var.get(),
-                        self.roll_type_var.get(),
+                        roll_limit,
+                        roll_type,
                     )
                     self.actuator_output.send_positions(pitch_position, roll_position)
                     self._append_serial_log(
