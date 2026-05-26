@@ -412,6 +412,7 @@ class MotionSimulatorApp:
         self.axis_output_history: list[tuple[float, float, float]] = []
         self.pitch_output_var = tk.StringVar(value="-")
         self.roll_output_var = tk.StringVar(value="-")
+        self.selected_profile: Optional[AxisProfile] = None
 
         self._create_widgets()
         self._schedule_update()
@@ -814,7 +815,7 @@ class MotionSimulatorApp:
         return self.profile_manager.profile_names()
 
     def _on_profile_selected(self) -> None:
-        """Populate the GUI fields with the selected profile but do not apply to the motion cue."""
+        """Populate the GUI fields with the selected profile but do not apply to the motion cue or axis output."""
         name = self.profile_var.get().strip()
         if not name:
             return
@@ -822,6 +823,9 @@ class MotionSimulatorApp:
         if profile is None:
             messagebox.showwarning("Profile not found", f"Profile '{name}' was not found.")
             return
+        # Store the selected profile so we can apply it later
+        self.selected_profile = profile
+        # Load values into UI for viewing, but don't apply mappings yet
         self.pitch_scale_var.set(profile.pitch_scale)
         self.roll_scale_var.set(profile.roll_scale)
         self.pitch_accel_gain_var.set(profile.pitch_accel_gain)
@@ -831,26 +835,9 @@ class MotionSimulatorApp:
         self.pitch_type_var.set(profile.pitch_type)
         self.roll_type_var.set(profile.roll_type)
         self.smoothing_var.set(profile.smoothing)
-        # Restore telemetry mapping selections (ensure lists have 10 entries)
-        p_sources = (profile.pitch_mapping_sources or [])[:10]
-        p_percents = (profile.pitch_mapping_percents or [])[:10]
-        r_sources = (profile.roll_mapping_sources or [])[:10]
-        r_percents = (profile.roll_mapping_percents or [])[:10]
-        while len(p_sources) < 10:
-            p_sources.append("None")
-        while len(p_percents) < 10:
-            p_percents.append(0.0)
-        while len(r_sources) < 10:
-            r_sources.append("None")
-        while len(r_percents) < 10:
-            r_percents.append(0.0)
-        for i in range(10):
-            self.pitch_mapping_source_vars[i].set(p_sources[i])
-            self.pitch_mapping_percent_vars[i].set(float(p_percents[i]))
-            self.roll_mapping_source_vars[i].set(r_sources[i])
-            self.roll_mapping_percent_vars[i].set(float(r_percents[i]))
+        # Note: telemetry mapping selections are NOT applied yet, only shown for preview
         self._update_axis_limit_labels()
-        self._append_serial_log(f"Selected profile '{name}'")
+        self._append_serial_log(f"Selected profile '{name}' (not applied yet, press 'Apply current settings' to apply)")
 
     def _load_selected_profile(self) -> None:
         name = self.profile_var.get().strip()
@@ -939,6 +926,27 @@ class MotionSimulatorApp:
         self.cue.roll_accel_gain = self.roll_accel_gain_var.get()
         self.cue.smoothing = self.smoothing_var.get()
         self.cue.smoothing = self.smoothing_var.get()
+        
+        # If a profile was selected, apply its telemetry mappings as well
+        if self.selected_profile is not None:
+            p_sources = (self.selected_profile.pitch_mapping_sources or [])[:10]
+            p_percents = (self.selected_profile.pitch_mapping_percents or [])[:10]
+            r_sources = (self.selected_profile.roll_mapping_sources or [])[:10]
+            r_percents = (self.selected_profile.roll_mapping_percents or [])[:10]
+            while len(p_sources) < 10:
+                p_sources.append("None")
+            while len(p_percents) < 10:
+                p_percents.append(0.0)
+            while len(r_sources) < 10:
+                r_sources.append("None")
+            while len(r_percents) < 10:
+                r_percents.append(0.0)
+            for i in range(10):
+                self.pitch_mapping_source_vars[i].set(p_sources[i])
+                self.pitch_mapping_percent_vars[i].set(float(p_percents[i]))
+                self.roll_mapping_source_vars[i].set(r_sources[i])
+                self.roll_mapping_percent_vars[i].set(float(r_percents[i]))
+            self._append_serial_log(f"Applied profile '{self.selected_profile.name}' settings")
 
     def _clamp_axis_value(self, value: float, limit: float) -> float:
         if limit <= 0:
