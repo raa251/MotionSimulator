@@ -822,8 +822,17 @@ class MotionSimulatorApp:
                 continue
             key = source_to_key.get(src)
             range_val = None
+            # Prefer the live UI telemetry range (so changing the range updates axis output immediately)
             if key is not None:
-                range_val = float(self.applied_settings.get("telemetry_ranges", {}).get(key, 0.0))
+                range_var = self.telemetry_range_vars.get(key)
+                if range_var is not None:
+                    try:
+                        range_val = float(range_var.get())
+                    except Exception:
+                        range_val = None
+                # Fall back to applied settings if UI var is not present
+                if range_val is None:
+                    range_val = float(self.applied_settings.get("telemetry_ranges", {}).get(key, 0.0))
             normalized = self._normalized_telemetry_value(frame, src, range_override=range_val)
             total += normalized * (float(pct) / 100.0)
 
