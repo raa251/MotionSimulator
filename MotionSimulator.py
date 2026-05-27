@@ -1177,15 +1177,28 @@ class MotionSimulatorApp:
 
         history = self.telemetry_history
         x_values = [frame.timestamp - history[0].timestamp for frame in history]
+
+        # Helper to return the clamped/raw telemetry value matching the Game Output display
+        def _limited_value(frame: TelemetryFrame, key: str, getter):
+            raw = getter(frame)
+            range_var = self.telemetry_range_vars.get(key)
+            try:
+                r = float(range_var.get()) if range_var is not None else 0.0
+            except Exception:
+                r = 0.0
+            if r > 0:
+                return max(min(raw, r), -r)
+            return raw
+
         if self.chart_mode_var.get() == "One graph":
             ax = self.figure.add_subplot(1, 1, 1)
             series = [
-                ([frame.pitch_deg for frame in history], "Pitch [deg]"),
-                ([frame.roll_deg for frame in history], "Roll [deg]"),
-                ([frame.speed_kmh for frame in history], "Speed [km/h]"),
-                ([frame.g_force_longitudinal for frame in history], "G Longitudinal"),
-                ([frame.g_force_lateral for frame in history], "G Lateral"),
-                ([frame.g_force_vertical for frame in history], "G Vertical"),
+                ([_limited_value(f, "pitch", lambda fr: fr.pitch_deg) for f in history], "Pitch [deg]"),
+                ([_limited_value(f, "roll", lambda fr: fr.roll_deg) for f in history], "Roll [deg]"),
+                ([_limited_value(f, "speed", lambda fr: fr.speed_kmh) for f in history], "Speed [km/h]"),
+                ([_limited_value(f, "g_long", lambda fr: fr.g_force_longitudinal) for f in history], "G Longitudinal"),
+                ([_limited_value(f, "g_lat", lambda fr: fr.g_force_lateral) for f in history], "G Lateral"),
+                ([_limited_value(f, "g_vert", lambda fr: fr.g_force_vertical) for f in history], "G Vertical"),
             ]
             all_values = []
             for values, label in series:
@@ -1208,12 +1221,12 @@ class MotionSimulatorApp:
             ax.grid(True)
         else:
             plot_data = [
-                ("Pitch [deg]", [frame.pitch_deg for frame in history]),
-                ("Roll [deg]", [frame.roll_deg for frame in history]),
-                ("Speed [km/h]", [frame.speed_kmh for frame in history]),
-                ("G Longitudinal", [frame.g_force_longitudinal for frame in history]),
-                ("G Lateral", [frame.g_force_lateral for frame in history]),
-                ("G Vertical", [frame.g_force_vertical for frame in history]),
+                ("Pitch [deg]", [_limited_value(f, "pitch", lambda fr: fr.pitch_deg) for f in history]),
+                ("Roll [deg]", [_limited_value(f, "roll", lambda fr: fr.roll_deg) for f in history]),
+                ("Speed [km/h]", [_limited_value(f, "speed", lambda fr: fr.speed_kmh) for f in history]),
+                ("G Longitudinal", [_limited_value(f, "g_long", lambda fr: fr.g_force_longitudinal) for f in history]),
+                ("G Lateral", [_limited_value(f, "g_lat", lambda fr: fr.g_force_lateral) for f in history]),
+                ("G Vertical", [_limited_value(f, "g_vert", lambda fr: fr.g_force_vertical) for f in history]),
             ]
             axes = [self.figure.add_subplot(3, 2, index + 1) for index in range(len(plot_data))]
             for ax, (title, values) in zip(axes, plot_data):
