@@ -26,15 +26,49 @@ import serial
 import serial.tools.list_ports
 
 PROFILE_PATH = Path(__file__).resolve().parent / "axis_profiles.json"
-TELEMETRY_SOURCE_OPTIONS = [
-    "None",
-    "Pitch",
-    "Roll",
-    "Speed",
-    "G Longitudinal",
-    "G Lateral",
-    "G Vertical",
-]
+
+# Definitions per supported game. Add new games here to extend supported telemetry sources.
+GAME_DEFINITIONS = {
+    "Assetto Corsa Competizione": {
+        "sources": [
+            "None",
+            "Pitch",
+            "Roll",
+            "Speed",
+            "G Longitudinal",
+            "G Lateral",
+            "G Vertical",
+        ],
+        "source_to_key": {
+            "Pitch": "pitch",
+            "Roll": "roll",
+            "Speed": "speed",
+            "G Longitudinal": "g_long",
+            "G Lateral": "g_lat",
+            "G Vertical": "g_vert",
+        },
+    },
+    "Assetto Corsa Evo": {
+        # For now Evo exposes the same logical telemetry names; adjust if formats differ
+        "sources": [
+            "None",
+            "Pitch",
+            "Roll",
+            "Speed",
+            "G Longitudinal",
+            "G Lateral",
+            "G Vertical",
+        ],
+        "source_to_key": {
+            "Pitch": "pitch",
+            "Roll": "roll",
+            "Speed": "speed",
+            "G Longitudinal": "g_long",
+            "G Lateral": "g_lat",
+            "G Vertical": "g_vert",
+        },
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -404,11 +438,16 @@ class MotionSimulatorApp:
         self.root.geometry("1140x780")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.chart_mode_var = tk.StringVar(value="One graph")
+        # Selected game (affects available telemetry sources)
+        self.game_var = tk.StringVar(value="Assetto Corsa Competizione")
         self.sample_start_time = time.time()
         self.pitch_mapping_source_vars = [tk.StringVar(value="None") for _ in range(10)]
         self.pitch_mapping_percent_vars = [tk.DoubleVar(value=0.0) for _ in range(10)]
         self.roll_mapping_source_vars = [tk.StringVar(value="None") for _ in range(10)]
         self.roll_mapping_percent_vars = [tk.DoubleVar(value=0.0) for _ in range(10)]
+        # Keep references to the mapping combobox widgets so we can update their values when changing games
+        self.pitch_mapping_comboboxes: list[ttk.Combobox] = []
+        self.roll_mapping_comboboxes: list[ttk.Combobox] = []
         self.axis_output_history: list[tuple[float, float, float]] = []
         self.pitch_output_var = tk.StringVar(value="-")
         self.roll_output_var = tk.StringVar(value="-")
@@ -533,6 +572,18 @@ class MotionSimulatorApp:
             command=self._update_charts,
         ).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=6)
 
+        # Game selection (placed below the checkbox)
+        ttk.Label(frame, text="Game:").grid(row=2, column=0, sticky=tk.W, pady=6)
+        self.game_combo = ttk.Combobox(
+            frame,
+            textvariable=self.game_var,
+            values=list(GAME_DEFINITIONS.keys()),
+            state="readonly",
+            width=28,
+        )
+        self.game_combo.grid(row=2, column=1, sticky=tk.W, pady=6)
+        self.game_combo.bind("<<ComboboxSelected>>", lambda _: self._on_game_selected())
+
         ttk.Label(frame, text="Display charts:").grid(row=1, column=2, sticky=tk.W, pady=6, padx=(20, 0))
         self.chart_mode_combo = ttk.Combobox(
             frame,
@@ -556,7 +607,7 @@ class MotionSimulatorApp:
         self.value_vars = {key: tk.StringVar(value="-") for _, key in labels}
 
         left_value_frame = ttk.Frame(frame)
-        left_value_frame.grid(row=2, column=0, rowspan=7, columnspan=3, sticky="nsew")
+        left_value_frame.grid(row=3, column=0, rowspan=7, columnspan=3, sticky="nsew")
         left_value_frame.grid_rowconfigure(0, weight=1)
         left_value_frame.grid_rowconfigure(len(labels) + 1, weight=1)
         left_value_frame.grid_columnconfigure(0, weight=1)
@@ -577,12 +628,12 @@ class MotionSimulatorApp:
                 ttk.Label(left_value_frame, text="", width=10).grid(row=index, column=2, sticky=tk.W, pady=4)
 
         chart_frame = ttk.Frame(frame)
-        chart_frame.grid(row=2, column=3, rowspan=7, columnspan=1, sticky="nsew", padx=(20, 0), pady=(0, 4))
+        chart_frame.grid(row=3, column=3, rowspan=7, columnspan=1, sticky="nsew", padx=(20, 0), pady=(0, 4))
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(2, weight=1)
         frame.grid_columnconfigure(3, weight=1)
-        frame.grid_rowconfigure(2, weight=1)
+        frame.grid_rowconfigure(3, weight=1)
 
         self.figure = Figure(figsize=(6, 4), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
@@ -658,13 +709,15 @@ class MotionSimulatorApp:
         ttk.Label(pitch_frame, text="Telemetry source:").grid(row=2, column=0, sticky=tk.W, pady=(8, 2))
         ttk.Label(pitch_frame, text="Max %:").grid(row=2, column=1, sticky=tk.W, pady=(8, 2))
         for index in range(10):
-            ttk.Combobox(
+            cb = ttk.Combobox(
                 pitch_frame,
                 textvariable=self.pitch_mapping_source_vars[index],
-                values=TELEMETRY_SOURCE_OPTIONS,
+                values=self._current_telemetry_sources(),
                 state="readonly",
                 width=20,
-            ).grid(row=index + 3, column=0, sticky=tk.W, pady=2)
+            )
+            cb.grid(row=index + 3, column=0, sticky=tk.W, pady=2)
+            self.pitch_mapping_comboboxes.append(cb)
             ttk.Spinbox(
                 pitch_frame,
                 from_=0,
@@ -692,13 +745,15 @@ class MotionSimulatorApp:
         ttk.Label(roll_frame, text="Telemetry source:").grid(row=2, column=0, sticky=tk.W, pady=(8, 2))
         ttk.Label(roll_frame, text="Max %:").grid(row=2, column=1, sticky=tk.W, pady=(8, 2))
         for index in range(10):
-            ttk.Combobox(
+            cb = ttk.Combobox(
                 roll_frame,
                 textvariable=self.roll_mapping_source_vars[index],
-                values=TELEMETRY_SOURCE_OPTIONS,
+                values=self._current_telemetry_sources(),
                 state="readonly",
                 width=20,
-            ).grid(row=index + 3, column=0, sticky=tk.W, pady=2)
+            )
+            cb.grid(row=index + 3, column=0, sticky=tk.W, pady=2)
+            self.roll_mapping_comboboxes.append(cb)
             ttk.Spinbox(
                 roll_frame,
                 from_=0,
@@ -763,21 +818,20 @@ class MotionSimulatorApp:
             "G Vertical": frame.g_force_vertical,
         }.get(source, 0.0)
 
+    def _current_telemetry_sources(self) -> list[str]:
+        return GAME_DEFINITIONS.get(self.game_var.get(), {}).get("sources", ["None"])[:]
+
+    def _current_source_to_key(self) -> dict[str, str]:
+        return GAME_DEFINITIONS.get(self.game_var.get(), {}).get("source_to_key", {})
+
     def _normalized_telemetry_value(self, frame: TelemetryFrame, source: str, range_override: Optional[float] = None) -> float:
         """Return telemetry value normalized to [-1, +1] based on the provided range or user-defined range.
 
         If `range_override` is given it is used; otherwise the UI range is used with sensible defaults.
         """
         raw = self._telemetry_value(frame, source)
-        # Map source string to the internal key used by telemetry_range_vars
-        source_to_key = {
-            "Pitch": "pitch",
-            "Roll": "roll",
-            "Speed": "speed",
-            "G Longitudinal": "g_long",
-            "G Lateral": "g_lat",
-            "G Vertical": "g_vert",
-        }
+        # Map source string to the internal key used by telemetry_range_vars (per selected game)
+        source_to_key = self._current_source_to_key()
 
         if range_override is not None:
             r = float(range_override)
@@ -806,15 +860,8 @@ class MotionSimulatorApp:
             percents = self.applied_settings.get("roll_mapping_percents", [])
             limit = float(self.applied_settings.get("roll_limit", 0.0))
 
-        # map telemetry name to internal key for ranges
-        source_to_key = {
-            "Pitch": "pitch",
-            "Roll": "roll",
-            "Speed": "speed",
-            "G Longitudinal": "g_long",
-            "G Lateral": "g_lat",
-            "G Vertical": "g_vert",
-        }
+        # map telemetry name to internal key for ranges (per selected game)
+        source_to_key = self._current_source_to_key()
 
         total = 0.0
         for src, pct in zip(sources, percents):
@@ -967,6 +1014,21 @@ class MotionSimulatorApp:
         # Note: these values are loaded into the input boxes but not applied until the user presses Apply
         self._update_axis_limit_labels()
         self._append_serial_log(f"Selected profile '{name}' (not applied yet, press 'Apply current settings' to apply)")
+
+    def _on_game_selected(self) -> None:
+        # Update mapping combobox values to match the selected game's available telemetry sources
+        sources = self._current_telemetry_sources()
+        for cb in getattr(self, "pitch_mapping_comboboxes", []):
+            cb["values"] = sources
+            if cb.get() not in sources:
+                cb.set("None")
+        for cb in getattr(self, "roll_mapping_comboboxes", []):
+            cb["values"] = sources
+            if cb.get() not in sources:
+                cb.set("None")
+        # Refresh charts and labels to reflect the new game's data mapping
+        self._update_charts()
+        self._append_serial_log(f"Selected game '{self.game_var.get()}'")
 
     def _load_selected_profile(self) -> None:
         name = self.profile_var.get().strip()
@@ -1219,6 +1281,8 @@ class MotionSimulatorApp:
             ax.set_title("Telemetry Overview")
             ax.legend(loc="upper left", fontsize="small")
             ax.grid(True)
+            # redraw with new game selection if necessary
+            self.canvas.draw()
         else:
             plot_data = [
                 ("Pitch [deg]", [_limited_value(f, "pitch", lambda fr: fr.pitch_deg) for f in history]),
