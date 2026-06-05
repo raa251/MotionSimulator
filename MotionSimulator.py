@@ -434,7 +434,7 @@ class MotionSimulatorApp:
         self.telemetry_history: list[TelemetryFrame] = []
         self.max_history = 120
         self.root = tk.Tk()
-        self.root.title("ACC 2DOF Motion Simulator")
+        self.root.title("2DOF Motion Simulator")
         self.root.geometry("1140x780")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.chart_mode_var = tk.StringVar(value="One graph")
