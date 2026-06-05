@@ -616,7 +616,12 @@ class MotionSimulatorApp:
         left_value_frame = ttk.Frame(frame)
         left_value_frame.grid(row=3, column=0, columnspan=2, sticky="nw", pady=(12, 0))
         
-        for index, (label, key) in enumerate(labels, start=0):
+        # Header row
+        ttk.Label(left_value_frame, text="", width=20).grid(row=0, column=0, sticky=tk.W, pady=4)
+        ttk.Label(left_value_frame, text="", width=18).grid(row=0, column=1, sticky="w", pady=4, padx=(8, 0))
+        ttk.Label(left_value_frame, text="Max").grid(row=0, column=2, sticky=tk.W, pady=4, padx=(8, 0))
+        
+        for index, (label, key) in enumerate(labels, start=1):
             ttk.Label(left_value_frame, text=label + ":").grid(row=index, column=0, sticky=tk.W, pady=4)
             ttk.Label(left_value_frame, textvariable=self.value_vars[key], width=18, anchor="w").grid(row=index, column=1, sticky="w", pady=4, padx=(8, 0))
             # Add a range input for live clamping/normalization for all telemetry keys except the timestamp
@@ -1453,7 +1458,7 @@ class MotionSimulatorApp:
                     self._update_serial_status()
 
         self._update_serial_status()
-        self.root.after(100, self._schedule_update)
+        self.root.after(33, self._schedule_update)
 
     def run(self) -> None:
         self.root.mainloop()
