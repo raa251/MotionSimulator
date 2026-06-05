@@ -462,6 +462,13 @@ class MotionSimulatorApp:
             "g_lat": tk.DoubleVar(value=3.0),
             "g_vert": tk.DoubleVar(value=2.0),
         }
+        
+        # Manual test mode variables
+        self.manual_test_mode_var = tk.BooleanVar(value=False)
+        self.manual_pitch_var = tk.DoubleVar(value=0.0)
+        self.manual_roll_var = tk.DoubleVar(value=0.0)
+        self.current_pitch_output = 0.0
+        self.current_roll_output = 0.0
 
         self._create_widgets()
         self._apply_initial_settings()
@@ -774,22 +781,60 @@ class MotionSimulatorApp:
         frame = ttk.Frame(self.axis_output_tab, padding=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="Axis Output", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=4, sticky=tk.W)
+        ttk.Label(frame, text="Axis Output", font=(None, 12, "bold")).grid(row=0, column=0, columnspan=6, sticky=tk.W)
 
-        ttk.Label(frame, text="Axis 1 output:").grid(row=1, column=0, sticky=tk.W, pady=6)
-        ttk.Label(frame, textvariable=self.pitch_output_var, width=16, anchor="center").grid(row=1, column=1, sticky="w", pady=6)
-        ttk.Label(frame, text="Axis 2 output:").grid(row=1, column=2, sticky=tk.W, pady=6)
-        ttk.Label(frame, textvariable=self.roll_output_var, width=16, anchor="center").grid(row=1, column=3, sticky="w", pady=6)
+        # Manual test mode checkbox
+        ttk.Checkbutton(
+            frame,
+            text="Manual Test Mode",
+            variable=self.manual_test_mode_var,
+            command=self._on_manual_test_mode_changed,
+        ).grid(row=1, column=0, columnspan=2, sticky=tk.W, pady=6)
 
+        # Axis 1 (Pitch) controls
+        ttk.Label(frame, text="Axis 1 output:").grid(row=2, column=0, sticky=tk.W, pady=6)
+        ttk.Label(frame, textvariable=self.pitch_output_var, width=16, anchor="center").grid(row=2, column=1, sticky="w", pady=6)
+        ttk.Label(frame, text="Axis 1 slider:").grid(row=3, column=0, sticky=tk.W, pady=4)
+        self.pitch_slider = ttk.Scale(
+            frame,
+            variable=self.manual_pitch_var,
+            from_=-15.0,
+            to=15.0,
+            orient=tk.HORIZONTAL,
+        )
+        self.pitch_slider.grid(row=3, column=1, sticky="ew", pady=4)
+        self.pitch_slider_label = ttk.Label(frame, text="0.00", width=6)
+        self.pitch_slider_label.grid(row=3, column=2, sticky=tk.W, padx=4, pady=4)
+        self.manual_pitch_var.trace_add("write", self._on_manual_slider_changed)
+
+        # Axis 2 (Roll) controls
+        ttk.Label(frame, text="Axis 2 output:").grid(row=2, column=3, sticky=tk.W, pady=6)
+        ttk.Label(frame, textvariable=self.roll_output_var, width=16, anchor="center").grid(row=2, column=4, sticky="w", pady=6)
+        ttk.Label(frame, text="Axis 2 slider:").grid(row=3, column=3, sticky=tk.W, pady=4)
+        self.roll_slider = ttk.Scale(
+            frame,
+            variable=self.manual_roll_var,
+            from_=-15.0,
+            to=15.0,
+            orient=tk.HORIZONTAL,
+        )
+        self.roll_slider.grid(row=3, column=4, sticky="ew", pady=4)
+        self.roll_slider_label = ttk.Label(frame, text="0.00", width=6)
+        self.roll_slider_label.grid(row=3, column=5, sticky=tk.W, padx=4, pady=4)
+        self.manual_roll_var.trace_add("write", self._on_manual_slider_changed)
+
+        # Graph frame - side by side layout
         graph_frame = ttk.Frame(frame)
-        graph_frame.grid(row=2, column=0, columnspan=4, sticky="nsew", pady=(8, 0))
+        graph_frame.grid(row=4, column=0, columnspan=6, sticky="nsew", pady=(16, 0))
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
-        frame.grid_columnconfigure(2, weight=1)
+        frame.grid_columnconfigure(2, weight=0)
         frame.grid_columnconfigure(3, weight=1)
-        frame.grid_rowconfigure(2, weight=1)
+        frame.grid_columnconfigure(4, weight=1)
+        frame.grid_columnconfigure(5, weight=0)
+        frame.grid_rowconfigure(4, weight=1)
 
-        self.output_figure = Figure(figsize=(8, 5), dpi=100)
+        self.output_figure = Figure(figsize=(12, 4), dpi=100)
         self.output_canvas = FigureCanvasTkAgg(self.output_figure, master=graph_frame)
         self.output_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self._update_axis_output_graph()
@@ -887,15 +932,21 @@ class MotionSimulatorApp:
         return total * limit
 
     def _update_axis_output_values(self, frame: TelemetryFrame) -> None:
-        # Compute outputs in axis units using applied settings
-        pitch_axis_value = self._compute_axis_output(frame, True)
-        roll_axis_value = self._compute_axis_output(frame, False)
+        # Check if manual test mode is enabled
+        if self.manual_test_mode_var.get():
+            # Use slider values in manual test mode
+            pitch_output = self.manual_pitch_var.get()
+            roll_output = self.manual_roll_var.get()
+        else:
+            # Compute outputs in axis units using applied settings
+            pitch_axis_value = self._compute_axis_output(frame, True)
+            roll_axis_value = self._compute_axis_output(frame, False)
 
-        # Clamp to applied limits for display/storage
-        pitch_limit = float(self.applied_settings.get("pitch_limit", self.pitch_limit_var.get()))
-        roll_limit = float(self.applied_settings.get("roll_limit", self.roll_limit_var.get()))
-        pitch_output = self._clamp_axis_value(pitch_axis_value, pitch_limit)
-        roll_output = self._clamp_axis_value(roll_axis_value, roll_limit)
+            # Clamp to applied limits for display/storage
+            pitch_limit = float(self.applied_settings.get("pitch_limit", self.pitch_limit_var.get()))
+            roll_limit = float(self.applied_settings.get("roll_limit", self.roll_limit_var.get()))
+            pitch_output = self._clamp_axis_value(pitch_axis_value, pitch_limit)
+            roll_output = self._clamp_axis_value(roll_axis_value, roll_limit)
 
         self.pitch_output_var.set(f"{pitch_output:.2f} {self._unit_for_type(self.applied_settings.get('pitch_type', self.pitch_type_var.get()))}")
         self.roll_output_var.set(f"{roll_output:.2f} {self._unit_for_type(self.applied_settings.get('roll_type', self.roll_type_var.get()))}")
@@ -911,16 +962,16 @@ class MotionSimulatorApp:
         self.output_figure.clear()
         history = self.axis_output_history
         if not history:
-            ax = self.output_figure.add_subplot(2, 1, 1)
-            ax.set_title("Axis 1 Output")
-            ax.set_xlabel("Seconds")
-            ax.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
-            ax.grid(True)
-            ax = self.output_figure.add_subplot(2, 1, 2)
-            ax.set_title("Axis 2 Output")
-            ax.set_xlabel("Seconds")
-            ax.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
-            ax.grid(True)
+            ax_pitch = self.output_figure.add_subplot(1, 2, 1)
+            ax_pitch.set_title("Axis 1 Output")
+            ax_pitch.set_xlabel("Seconds")
+            ax_pitch.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
+            ax_pitch.grid(True)
+            ax_roll = self.output_figure.add_subplot(1, 2, 2)
+            ax_roll.set_title("Axis 2 Output")
+            ax_roll.set_xlabel("Seconds")
+            ax_roll.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
+            ax_roll.grid(True)
             self.output_figure.tight_layout()
             self.output_canvas.draw()
             return
@@ -929,7 +980,7 @@ class MotionSimulatorApp:
         pitch_values = [row[1] for row in history]
         roll_values = [row[2] for row in history]
 
-        pitch_axis = self.output_figure.add_subplot(2, 1, 1)
+        pitch_axis = self.output_figure.add_subplot(1, 2, 1)
         pitch_axis.plot(timestamps, pitch_values, label="Axis 1 output")
         pitch_axis.set_title("Axis 1 Output")
         pitch_axis.set_ylabel(self._unit_for_type(self.pitch_type_var.get()))
@@ -944,7 +995,7 @@ class MotionSimulatorApp:
                 margin = max(0.1, (pitch_max - pitch_min) * 0.1)
             pitch_axis.set_ylim(pitch_min - margin, pitch_max + margin)
 
-        roll_axis = self.output_figure.add_subplot(2, 1, 2)
+        roll_axis = self.output_figure.add_subplot(1, 2, 2)
         roll_axis.plot(timestamps, roll_values, color="tab:orange", label="Axis 2 output")
         roll_axis.set_title("Axis 2 Output")
         roll_axis.set_ylabel(self._unit_for_type(self.roll_type_var.get()))
@@ -1029,6 +1080,20 @@ class MotionSimulatorApp:
         # Refresh charts and labels to reflect the new game's data mapping
         self._update_charts()
         self._append_serial_log(f"Selected game '{self.game_var.get()}'")
+
+    def _on_manual_test_mode_changed(self) -> None:
+        """Called when manual test mode checkbox is toggled."""
+        # Reset sliders to neutral position when toggling mode
+        if not self.manual_test_mode_var.get():
+            self.manual_pitch_var.set(0.0)
+            self.manual_roll_var.set(0.0)
+        # Update slider display
+        self._on_manual_slider_changed()
+
+    def _on_manual_slider_changed(self, *args) -> None:
+        """Called when manual test mode sliders are changed to update their display labels."""
+        self.pitch_slider_label.config(text=f"{self.manual_pitch_var.get():.2f}")
+        self.roll_slider_label.config(text=f"{self.manual_roll_var.get():.2f}")
 
     def _load_selected_profile(self) -> None:
         name = self.profile_var.get().strip()
