@@ -614,35 +614,30 @@ class MotionSimulatorApp:
         self.value_vars = {key: tk.StringVar(value="-") for _, key in labels}
 
         left_value_frame = ttk.Frame(frame)
-        left_value_frame.grid(row=3, column=0, rowspan=7, columnspan=3, sticky="nsew")
-        left_value_frame.grid_rowconfigure(0, weight=1)
-        left_value_frame.grid_rowconfigure(len(labels) + 1, weight=1)
-        left_value_frame.grid_columnconfigure(0, weight=1)
-        left_value_frame.grid_columnconfigure(1, weight=1)
-        left_value_frame.grid_columnconfigure(2, weight=1)
-
-        for index, (label, key) in enumerate(labels, start=1):
+        left_value_frame.grid(row=3, column=0, columnspan=2, sticky="nw", pady=(12, 0))
+        
+        for index, (label, key) in enumerate(labels, start=0):
             ttk.Label(left_value_frame, text=label + ":").grid(row=index, column=0, sticky=tk.W, pady=4)
-            ttk.Label(left_value_frame, textvariable=self.value_vars[key], width=18, anchor="center").grid(row=index, column=1, sticky="ew", pady=4)
+            ttk.Label(left_value_frame, textvariable=self.value_vars[key], width=18, anchor="w").grid(row=index, column=1, sticky="w", pady=4, padx=(8, 0))
             # Add a range input for live clamping/normalization for all telemetry keys except the timestamp
             if key != "updated":
                 range_var = self.telemetry_range_vars.get(key)
                 if range_var is None:
                     range_var = tk.DoubleVar(value=0.0)
                     self.telemetry_range_vars[key] = range_var
-                ttk.Entry(left_value_frame, textvariable=range_var, width=10).grid(row=index, column=2, sticky=tk.W, pady=4)
+                ttk.Entry(left_value_frame, textvariable=range_var, width=10).grid(row=index, column=2, sticky=tk.W, pady=4, padx=(8, 0))
             else:
-                ttk.Label(left_value_frame, text="", width=10).grid(row=index, column=2, sticky=tk.W, pady=4)
+                ttk.Label(left_value_frame, text="", width=10).grid(row=index, column=2, sticky=tk.W, pady=4, padx=(8, 0))
 
         chart_frame = ttk.Frame(frame)
-        chart_frame.grid(row=3, column=3, rowspan=7, columnspan=1, sticky="nsew", padx=(20, 0), pady=(0, 4))
-        frame.grid_columnconfigure(0, weight=1)
-        frame.grid_columnconfigure(1, weight=1)
+        chart_frame.grid(row=3, column=2, columnspan=2, sticky="nsew", padx=(20, 0), pady=(12, 0))
+        frame.grid_columnconfigure(0, weight=0)
+        frame.grid_columnconfigure(1, weight=0)
         frame.grid_columnconfigure(2, weight=1)
         frame.grid_columnconfigure(3, weight=1)
         frame.grid_rowconfigure(3, weight=1)
 
-        self.figure = Figure(figsize=(6, 4), dpi=100)
+        self.figure = Figure(figsize=(8, 4), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.figure, master=chart_frame)
         self.canvas_widget = self.canvas.get_tk_widget()
         self.canvas_widget.pack(fill=tk.BOTH, expand=True)
