@@ -805,12 +805,13 @@ class MotionSimulatorApp:
         self.pitch_slider.grid(row=3, column=1, sticky="ew", pady=4)
         self.pitch_slider_label = ttk.Label(frame, text="0.00", width=6)
         self.pitch_slider_label.grid(row=3, column=2, sticky=tk.W, padx=4, pady=4)
+        ttk.Button(frame, text="Reset", command=lambda: self.manual_pitch_var.set(0.0)).grid(row=3, column=3, sticky=tk.W, padx=2, pady=4)
         self.manual_pitch_var.trace_add("write", self._on_manual_slider_changed)
 
         # Axis 2 (Roll) controls
-        ttk.Label(frame, text="Axis 2 output:").grid(row=2, column=3, sticky=tk.W, pady=6)
-        ttk.Label(frame, textvariable=self.roll_output_var, width=16, anchor="center").grid(row=2, column=4, sticky="w", pady=6)
-        ttk.Label(frame, text="Axis 2 slider:").grid(row=3, column=3, sticky=tk.W, pady=4)
+        ttk.Label(frame, text="Axis 2 output:").grid(row=2, column=4, sticky=tk.W, pady=6)
+        ttk.Label(frame, textvariable=self.roll_output_var, width=16, anchor="center").grid(row=2, column=5, sticky="w", pady=6)
+        ttk.Label(frame, text="Axis 2 slider:").grid(row=3, column=4, sticky=tk.W, pady=4)
         self.roll_slider = ttk.Scale(
             frame,
             variable=self.manual_roll_var,
@@ -818,20 +819,23 @@ class MotionSimulatorApp:
             to=15.0,
             orient=tk.HORIZONTAL,
         )
-        self.roll_slider.grid(row=3, column=4, sticky="ew", pady=4)
+        self.roll_slider.grid(row=3, column=5, sticky="ew", pady=4)
         self.roll_slider_label = ttk.Label(frame, text="0.00", width=6)
-        self.roll_slider_label.grid(row=3, column=5, sticky=tk.W, padx=4, pady=4)
+        self.roll_slider_label.grid(row=3, column=6, sticky=tk.W, padx=4, pady=4)
+        ttk.Button(frame, text="Reset", command=lambda: self.manual_roll_var.set(0.0)).grid(row=3, column=7, sticky=tk.W, padx=2, pady=4)
         self.manual_roll_var.trace_add("write", self._on_manual_slider_changed)
 
         # Graph frame - side by side layout
         graph_frame = ttk.Frame(frame)
-        graph_frame.grid(row=4, column=0, columnspan=6, sticky="nsew", pady=(16, 0))
+        graph_frame.grid(row=4, column=0, columnspan=8, sticky="nsew", pady=(16, 0))
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
         frame.grid_columnconfigure(2, weight=0)
-        frame.grid_columnconfigure(3, weight=1)
+        frame.grid_columnconfigure(3, weight=0)
         frame.grid_columnconfigure(4, weight=1)
-        frame.grid_columnconfigure(5, weight=0)
+        frame.grid_columnconfigure(5, weight=1)
+        frame.grid_columnconfigure(6, weight=0)
+        frame.grid_columnconfigure(7, weight=0)
         frame.grid_rowconfigure(4, weight=1)
 
         self.output_figure = Figure(figsize=(12, 4), dpi=100)
@@ -1403,6 +1407,18 @@ class MotionSimulatorApp:
             frame = self._generate_sample_frame()
         else:
             frame = self.receiver.get_latest()
+
+        # In manual test mode, create a dummy frame if no real telemetry data is available
+        if frame is None and self.manual_test_mode_var.get():
+            frame = TelemetryFrame(
+                timestamp=time.time(),
+                pitch_deg=0.0,
+                roll_deg=0.0,
+                g_force_longitudinal=0.0,
+                g_force_lateral=0.0,
+                g_force_vertical=0.0,
+                speed_kmh=0.0,
+            )
 
         if frame is not None:
             self.latest_frame = frame
