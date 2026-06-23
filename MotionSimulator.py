@@ -6,9 +6,11 @@ import argparse
 import json
 import math
 import logging
+import os
 import queue
 import socket
 import struct
+import sys
 import threading
 import time
 import tkinter as tk
@@ -25,7 +27,13 @@ from matplotlib.figure import Figure
 import serial
 import serial.tools.list_ports
 
-PROFILE_PATH = Path(__file__).resolve().parent / "axis_profiles.json"
+
+def get_profile_path() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent / "axis_profiles.json"
+    return Path(__file__).resolve().parent / "axis_profiles.json"
+
+PROFILE_PATH = get_profile_path()
 
 # Definitions per supported game. Add new games here to extend supported telemetry sources.
 GAME_DEFINITIONS = {
